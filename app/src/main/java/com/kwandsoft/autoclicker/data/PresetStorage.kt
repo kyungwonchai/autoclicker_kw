@@ -13,6 +13,32 @@ object PresetStorage {
     private const val KEY_SLOTS = "saved_button_slots_json"
     private const val KEY_PRESETS = "saved_presets_json"
 
+    private const val KEY_ACTIVE_SLOT = "saved_active_slot_index"
+    private const val KEY_MENU_X = "saved_menu_x"
+    private const val KEY_MENU_Y = "saved_menu_y"
+
+    fun saveActiveSlot(context: Context, slotIndex: Int) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putInt(KEY_ACTIVE_SLOT, slotIndex).apply()
+    }
+
+    fun getActiveSlot(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getInt(KEY_ACTIVE_SLOT, 0)
+    }
+
+    fun saveMenuPosition(context: Context, x: Int, y: Int) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putInt(KEY_MENU_X, x).putInt(KEY_MENU_Y, y).apply()
+    }
+
+    fun getMenuPosition(context: Context): Pair<Int, Int> {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val x = prefs.getInt(KEY_MENU_X, 20)
+        val y = prefs.getInt(KEY_MENU_Y, 120)
+        return Pair(x, y)
+    }
+
     fun saveSlots(context: Context, slots: List<ButtonSlot>) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val arr = JSONArray()
@@ -106,8 +132,8 @@ object PresetStorage {
                                 xRatio = pObj.optDouble("xRatio", 0.5).toFloat(),
                                 yRatio = pObj.optDouble("yRatio", 0.5).toFloat(),
                                 actionType = actionType,
-                                holdDurationMs = pObj.optLong("holdDurationMs", 15000L),
-                                delayAfterMs = pObj.optLong("delayAfterMs", 300L),
+                                holdDurationMs = pObj.optLong("holdDurationMs", 5000L),
+                                delayAfterMs = pObj.optLong("delayAfterMs", 1000L),
                                 repeatCount = pObj.optInt("repeatCount", 1)
                             )
                         )
@@ -121,11 +147,11 @@ object PresetStorage {
 
         if (list.isEmpty()) {
             return listOf(
-                ButtonSlot(1, name = "1번 (15초 홀드)").apply {
-                    points.add(ClickPoint(1, 0.5f, 0.45f, ActionType.HOLD, 15000L, 300L))
+                ButtonSlot(1, name = "1번 (5초 홀드)").apply {
+                    points.add(ClickPoint(1, 0.5f, 0.45f, ActionType.HOLD, 5000L, 500L))
                 },
-                ButtonSlot(2, name = "2번 (단발 탭)").apply {
-                    points.add(ClickPoint(1, 0.5f, 0.55f, ActionType.TAP, 50L, 500L))
+                ButtonSlot(2, name = "2번 (단발 탭 1초)").apply {
+                    points.add(ClickPoint(1, 0.5f, 0.55f, ActionType.TAP, 50L, 1000L))
                 },
                 ButtonSlot(3, name = "3번 (연타 10회)").apply {
                     points.add(ClickPoint(1, 0.5f, 0.65f, ActionType.MULTI_TAP, 50L, 100L, repeatCount = 10))

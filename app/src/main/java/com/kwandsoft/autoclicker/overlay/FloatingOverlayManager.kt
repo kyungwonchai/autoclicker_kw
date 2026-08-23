@@ -42,10 +42,13 @@ class FloatingOverlayManager(
         slots.clear()
         slots.addAll(PresetStorage.loadSlots(context))
         if (slots.isEmpty()) {
-            slots.add(ButtonSlot(1, "1번 (15초 홀드)"))
-            slots.add(ButtonSlot(2, "2번 (단발 탭)"))
+            slots.add(ButtonSlot(1, "1번 (5초 홀드)"))
+            slots.add(ButtonSlot(2, "2번 (단발 탭 1초)"))
             slots.add(ButtonSlot(3, "3번 (연타 10회)"))
         }
+
+        activeSlotIndex = PresetStorage.getActiveSlot(context).coerceIn(0, slots.size - 1)
+        val (savedX, savedY) = PresetStorage.getMenuPosition(context)
 
         val paramsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -62,8 +65,8 @@ class FloatingOverlayManager(
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 20
-            y = 120
+            x = savedX
+            y = savedY
         }
 
         val container = LinearLayout(context).apply {
@@ -194,6 +197,7 @@ class FloatingOverlayManager(
 
     private fun selectSlot(index: Int) {
         activeSlotIndex = index
+        PresetStorage.saveActiveSlot(context, activeSlotIndex)
         slotIndicatorView?.apply {
             text = "[${activeSlotIndex + 1}번 편집]"
             setTextColor(Color.parseColor(getCurrentSlot().colorHex))
@@ -277,6 +281,12 @@ class FloatingOverlayManager(
                     menuLayoutParams?.x = initialX + dx
                     menuLayoutParams?.y = initialY + dy
                     windowManager.updateViewLayout(controlMenuView, menuLayoutParams)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    menuLayoutParams?.let {
+                        PresetStorage.saveMenuPosition(context, it.x, it.y)
+                    }
                     true
                 }
                 else -> false
