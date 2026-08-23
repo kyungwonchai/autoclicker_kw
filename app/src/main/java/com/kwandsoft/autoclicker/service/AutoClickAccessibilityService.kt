@@ -71,8 +71,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
         stopClicking()
 
         val pointsSnapshot = slot.points.map { it.copy() }
-        val triggerMode = slot.triggerMode
-        val loopRepeatCount = slot.loopRepeatCount
         val loopDelayMs = slot.loopDelayMs
         val slotId = slot.slotId
 
@@ -81,16 +79,9 @@ class AutoClickAccessibilityService : AccessibilityService() {
         onStatusChange?.invoke(true, slotId)
 
         executionJob = serviceScope.launch {
-            var currentIteration = 0
-            val infiniteLoop = triggerMode == ActionTrigger.INFINITE
-            val maxCount = when (triggerMode) {
-                ActionTrigger.INFINITE -> Int.MAX_VALUE
-                ActionTrigger.ONCE -> 1
-                ActionTrigger.COUNT -> loopRepeatCount
-            }
-
             try {
-                while (isActive && isRunning.get() && (infiniteLoop || currentIteration < maxCount)) {
+                // 무조건 무한 반복 (중지 버튼 누를 때까지 멈추지 않고 계속 실행)
+                while (isActive && isRunning.get()) {
                     for (point in pointsSnapshot) {
                         if (!isActive || !isRunning.get()) break
 
@@ -126,8 +117,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
                             delay(point.delayAfterMs)
                         }
                     }
-                    currentIteration++
-                    if (loopDelayMs > 0 && isActive && isRunning.get() && (infiniteLoop || currentIteration < maxCount)) {
+                    if (loopDelayMs > 0 && isActive && isRunning.get()) {
                         delay(loopDelayMs)
                     }
                 }

@@ -476,7 +476,7 @@ class FloatingOverlayManager(
         dialog.show()
     }
 
-    // 슬롯 전체 설정 다이얼로그 (버튼 이름, 반복 모드: 무한/1회/N회, 루프 대기시간)
+    // 슬롯 전체 설정 다이얼로그 (버튼 이름, 루프 대기시간)
     private fun showSlotConfigDialog(slot: ButtonSlot) {
         val paramsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -491,94 +491,44 @@ class FloatingOverlayManager(
             setPadding(40, 20, 40, 20)
         }
 
-        val nameLabel = TextView(context).apply { text = "버튼 이름 / 설명:"; textSize = 13f }
+        val nameLabel = TextView(context).apply { text = "버튼 이름 / 메모:"; textSize = 13f }
         val nameInput = EditText(context).apply { setText(slot.name) }
 
-        val triggerLabel = TextView(context).apply {
-            text = "실행 반복 방식:"
+        val loopInfoLabel = TextView(context).apply {
+            text = "⚡ 동작 모드: ♾️ 무한 반복 (중지 누를 때까지 계속 실행)"
             textSize = 13f
-            setPadding(0, 12, 0, 0)
-        }
-        val triggerGroup = RadioGroup(context).apply { orientation = RadioGroup.VERTICAL }
-        val rbInfinite = RadioButton(context).apply { text = "무한 반복 (중지 누를 때까지)"; id = View.generateViewId() }
-        val rbOnce = RadioButton(context).apply { text = "1회만 실행 후 자동 종료"; id = View.generateViewId() }
-        val rbCount = RadioButton(context).apply { text = "지정된 횟수만큼 반복"; id = View.generateViewId() }
-
-        triggerGroup.addView(rbInfinite)
-        triggerGroup.addView(rbOnce)
-        triggerGroup.addView(rbCount)
-
-        val loopCountLabel = TextView(context).apply {
-            text = "반복 횟수 (지정 횟수 모드 시):"
-            textSize = 13f
-            setPadding(0, 12, 0, 0)
-        }
-        val loopCountInput = EditText(context).apply {
-            setText(slot.loopRepeatCount.toString())
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setTextColor(Color.parseColor("#4CAF50"))
+            setPadding(0, 16, 0, 8)
         }
 
         val loopDelayLabel = TextView(context).apply {
-            text = "한 바퀴 끝나고 대기 시간 (초):"
+            text = "한 사이클 끝난 후 다음 반복까지 대기 (초):"
             textSize = 13f
-            setPadding(0, 12, 0, 0)
+            setPadding(0, 10, 0, 0)
         }
         val loopDelayInput = EditText(context).apply {
             setText((slot.loopDelayMs / 1000.0).toString())
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
 
-        fun updateTriggerVisibility(mode: ActionTrigger) {
-            val isCount = mode == ActionTrigger.COUNT
-            loopCountLabel.visibility = if (isCount) View.VISIBLE else View.GONE
-            loopCountInput.visibility = if (isCount) View.VISIBLE else View.GONE
-        }
-
-        triggerGroup.setOnCheckedChangeListener { _, checkedId ->
-            val mode = when (checkedId) {
-                rbInfinite.id -> ActionTrigger.INFINITE
-                rbOnce.id -> ActionTrigger.ONCE
-                rbCount.id -> ActionTrigger.COUNT
-                else -> ActionTrigger.INFINITE
-            }
-            updateTriggerVisibility(mode)
-        }
-
-        when (slot.triggerMode) {
-            ActionTrigger.INFINITE -> triggerGroup.check(rbInfinite.id)
-            ActionTrigger.ONCE -> triggerGroup.check(rbOnce.id)
-            ActionTrigger.COUNT -> triggerGroup.check(rbCount.id)
-        }
-        updateTriggerVisibility(slot.triggerMode)
-
         layout.addView(nameLabel)
         layout.addView(nameInput)
-        layout.addView(triggerLabel)
-        layout.addView(triggerGroup)
-        layout.addView(loopCountLabel)
-        layout.addView(loopCountInput)
+        layout.addView(loopInfoLabel)
         layout.addView(loopDelayLabel)
         layout.addView(loopDelayInput)
 
         scrollView.addView(layout)
 
         val dialog = AlertDialog.Builder(context)
-            .setTitle("[버튼 ${slot.slotId}] 상세 설정")
+            .setTitle("[버튼 ${slot.slotId}] 설정")
             .setView(scrollView)
             .setPositiveButton("저장") { _, _ ->
                 slot.name = nameInput.text.toString().trim()
-                slot.triggerMode = when (triggerGroup.checkedRadioButtonId) {
-                    rbInfinite.id -> ActionTrigger.INFINITE
-                    rbOnce.id -> ActionTrigger.ONCE
-                    rbCount.id -> ActionTrigger.COUNT
-                    else -> ActionTrigger.INFINITE
-                }
-                slot.loopRepeatCount = loopCountInput.text.toString().toIntOrNull() ?: 5
                 val loopDelaySec = loopDelayInput.text.toString().toDoubleOrNull() ?: 0.0
                 slot.loopDelayMs = (loopDelaySec * 1000).toLong()
 
                 saveCurrentState()
-                Toast.makeText(context, "${slot.name} 설정 저장 완료", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "${slot.name} 저장 완료", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("취소", null)
             .create()
