@@ -336,9 +336,10 @@ class FloatingOverlayManager(
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val scrollView = ScrollView(context)
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 24, 40, 24)
+            setPadding(40, 20, 40, 20)
         }
 
         // 동작 방식 선택 라디오 버튼
@@ -353,23 +354,17 @@ class FloatingOverlayManager(
 
         val rbHold = RadioButton(context).apply { text = "꾹 누르기 (홀드 - 지정 초 유지)"; id = View.generateViewId() }
         val rbTap = RadioButton(context).apply { text = "단발 탭 (빠른 클릭 1회)"; id = View.generateViewId() }
-        val rbMultiTap = RadioButton(context).apply { text = "연타 (지정 횟수 빠른 반복)"; id = View.generateViewId() }
+        val rbMultiTap = RadioButton(context).apply { text = "연타 (지정 횟수 빠른 연타)"; id = View.generateViewId() }
 
         radioGroup.addView(rbHold)
         radioGroup.addView(rbTap)
         radioGroup.addView(rbMultiTap)
 
-        when (point.actionType) {
-            ActionType.HOLD -> radioGroup.check(rbHold.id)
-            ActionType.TAP -> radioGroup.check(rbTap.id)
-            ActionType.MULTI_TAP -> radioGroup.check(rbMultiTap.id)
-        }
-
         // 1. 홀드 시간
         val holdLabel = TextView(context).apply {
-            text = "① 꾹 누르고 있을 시간 (초) [홀드 전용]"
+            text = "① 꾹 누르고 있을 시간 (초)"
             textSize = 13f
-            setPadding(0, 16, 0, 0)
+            setPadding(0, 12, 0, 0)
         }
         val holdInput = EditText(context).apply {
             setText((point.holdDurationMs / 1000.0).toString())
@@ -378,9 +373,9 @@ class FloatingOverlayManager(
 
         // 2. 연타 횟수
         val countLabel = TextView(context).apply {
-            text = "② 연타 횟수 (회) [연타 전용]"
+            text = "② 연타 횟수 (회)"
             textSize = 13f
-            setPadding(0, 16, 0, 0)
+            setPadding(0, 12, 0, 0)
         }
         val countInput = EditText(context).apply {
             setText(point.repeatCount.toString())
@@ -391,12 +386,56 @@ class FloatingOverlayManager(
         val delayLabel = TextView(context).apply {
             text = "③ 뗀 후 대기 시간 (초)"
             textSize = 13f
-            setPadding(0, 16, 0, 0)
+            setPadding(0, 12, 0, 0)
         }
         val delayInput = EditText(context).apply {
             setText((point.delayAfterMs / 1000.0).toString())
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
+
+        // 동작에 따라 불필요한 입력칸 숨김/표시 처리
+        fun updateInputVisibility(actionType: ActionType) {
+            when (actionType) {
+                ActionType.HOLD -> {
+                    holdLabel.visibility = View.VISIBLE
+                    holdInput.visibility = View.VISIBLE
+                    countLabel.visibility = View.GONE
+                    countInput.visibility = View.GONE
+                    delayLabel.text = "② 뗀 후 다음 누르기까지 대기 (초)"
+                }
+                ActionType.TAP -> {
+                    holdLabel.visibility = View.GONE
+                    holdInput.visibility = View.GONE
+                    countLabel.visibility = View.GONE
+                    countInput.visibility = View.GONE
+                    delayLabel.text = "① 탭 후 다음 동작까지 대기 (초)"
+                }
+                ActionType.MULTI_TAP -> {
+                    holdLabel.visibility = View.GONE
+                    holdInput.visibility = View.GONE
+                    countLabel.visibility = View.VISIBLE
+                    countInput.visibility = View.VISIBLE
+                    delayLabel.text = "② 연타 사이 간격/대기 (초)"
+                }
+            }
+        }
+
+        radioGroup.setOnCheckedChangeListener { _, checkedId ->
+            val type = when (checkedId) {
+                rbHold.id -> ActionType.HOLD
+                rbTap.id -> ActionType.TAP
+                rbMultiTap.id -> ActionType.MULTI_TAP
+                else -> ActionType.HOLD
+            }
+            updateInputVisibility(type)
+        }
+
+        when (point.actionType) {
+            ActionType.HOLD -> radioGroup.check(rbHold.id)
+            ActionType.TAP -> radioGroup.check(rbTap.id)
+            ActionType.MULTI_TAP -> radioGroup.check(rbMultiTap.id)
+        }
+        updateInputVisibility(point.actionType)
 
         layout.addView(typeLabel)
         layout.addView(radioGroup)
@@ -407,9 +446,11 @@ class FloatingOverlayManager(
         layout.addView(delayLabel)
         layout.addView(delayInput)
 
+        scrollView.addView(layout)
+
         val dialog = AlertDialog.Builder(context)
             .setTitle("포인트 #${point.id} 동작 설정")
-            .setView(layout)
+            .setView(scrollView)
             .setPositiveButton("저장") { _, _ ->
                 val selectedType = when (radioGroup.checkedRadioButtonId) {
                     rbHold.id -> ActionType.HOLD
@@ -444,9 +485,10 @@ class FloatingOverlayManager(
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val scrollView = ScrollView(context)
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 24, 40, 24)
+            setPadding(40, 20, 40, 20)
         }
 
         val nameLabel = TextView(context).apply { text = "버튼 이름 / 설명:"; textSize = 13f }
@@ -455,7 +497,7 @@ class FloatingOverlayManager(
         val triggerLabel = TextView(context).apply {
             text = "실행 반복 방식:"
             textSize = 13f
-            setPadding(0, 16, 0, 0)
+            setPadding(0, 12, 0, 0)
         }
         val triggerGroup = RadioGroup(context).apply { orientation = RadioGroup.VERTICAL }
         val rbInfinite = RadioButton(context).apply { text = "무한 반복 (중지 누를 때까지)"; id = View.generateViewId() }
@@ -466,16 +508,10 @@ class FloatingOverlayManager(
         triggerGroup.addView(rbOnce)
         triggerGroup.addView(rbCount)
 
-        when (slot.triggerMode) {
-            ActionTrigger.INFINITE -> triggerGroup.check(rbInfinite.id)
-            ActionTrigger.ONCE -> triggerGroup.check(rbOnce.id)
-            ActionTrigger.COUNT -> triggerGroup.check(rbCount.id)
-        }
-
         val loopCountLabel = TextView(context).apply {
             text = "반복 횟수 (지정 횟수 모드 시):"
             textSize = 13f
-            setPadding(0, 16, 0, 0)
+            setPadding(0, 12, 0, 0)
         }
         val loopCountInput = EditText(context).apply {
             setText(slot.loopRepeatCount.toString())
@@ -485,12 +521,35 @@ class FloatingOverlayManager(
         val loopDelayLabel = TextView(context).apply {
             text = "한 바퀴 끝나고 대기 시간 (초):"
             textSize = 13f
-            setPadding(0, 16, 0, 0)
+            setPadding(0, 12, 0, 0)
         }
         val loopDelayInput = EditText(context).apply {
             setText((slot.loopDelayMs / 1000.0).toString())
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
+
+        fun updateTriggerVisibility(mode: ActionTrigger) {
+            val isCount = mode == ActionTrigger.COUNT
+            loopCountLabel.visibility = if (isCount) View.VISIBLE else View.GONE
+            loopCountInput.visibility = if (isCount) View.VISIBLE else View.GONE
+        }
+
+        triggerGroup.setOnCheckedChangeListener { _, checkedId ->
+            val mode = when (checkedId) {
+                rbInfinite.id -> ActionTrigger.INFINITE
+                rbOnce.id -> ActionTrigger.ONCE
+                rbCount.id -> ActionTrigger.COUNT
+                else -> ActionTrigger.INFINITE
+            }
+            updateTriggerVisibility(mode)
+        }
+
+        when (slot.triggerMode) {
+            ActionTrigger.INFINITE -> triggerGroup.check(rbInfinite.id)
+            ActionTrigger.ONCE -> triggerGroup.check(rbOnce.id)
+            ActionTrigger.COUNT -> triggerGroup.check(rbCount.id)
+        }
+        updateTriggerVisibility(slot.triggerMode)
 
         layout.addView(nameLabel)
         layout.addView(nameInput)
@@ -501,9 +560,11 @@ class FloatingOverlayManager(
         layout.addView(loopDelayLabel)
         layout.addView(loopDelayInput)
 
+        scrollView.addView(layout)
+
         val dialog = AlertDialog.Builder(context)
             .setTitle("[버튼 ${slot.slotId}] 상세 설정")
-            .setView(layout)
+            .setView(scrollView)
             .setPositiveButton("저장") { _, _ ->
                 slot.name = nameInput.text.toString().trim()
                 slot.triggerMode = when (triggerGroup.checkedRadioButtonId) {
