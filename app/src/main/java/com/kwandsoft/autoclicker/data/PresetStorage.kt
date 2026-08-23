@@ -16,6 +16,40 @@ object PresetStorage {
     private const val KEY_ACTIVE_SLOT = "saved_active_slot_index"
     private const val KEY_MENU_X = "saved_menu_x"
     private const val KEY_MENU_Y = "saved_menu_y"
+    private const val KEY_DOKKAEBI = "saved_dokkaebi_config_json"
+
+    fun saveDokkaebiConfig(
+        context: Context,
+        enabled: Boolean,
+        touchLX: Float, touchLY: Float,
+        touchRX: Float, touchRY: Float,
+        targetLX: Float, targetLY: Float,
+        targetRX: Float, targetRY: Float
+    ) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val obj = JSONObject().apply {
+            put("enabled", enabled)
+            put("touchLX", touchLX.toDouble())
+            put("touchLY", touchLY.toDouble())
+            put("touchRX", touchRX.toDouble())
+            put("touchRY", touchRY.toDouble())
+            put("targetLX", targetLX.toDouble())
+            put("targetLY", targetLY.toDouble())
+            put("targetRX", targetRX.toDouble())
+            put("targetRY", targetRY.toDouble())
+        }
+        prefs.edit().putString(KEY_DOKKAEBI, obj.toString()).apply()
+    }
+
+    fun loadDokkaebiConfig(context: Context): JSONObject {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val jsonStr = prefs.getString(KEY_DOKKAEBI, null)
+        return if (jsonStr != null) {
+            try { JSONObject(jsonStr) } catch (e: Exception) { JSONObject() }
+        } else {
+            JSONObject()
+        }
+    }
 
     fun saveActiveSlot(context: Context, slotIndex: Int) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

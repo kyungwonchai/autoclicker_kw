@@ -143,6 +143,44 @@ class AutoClickAccessibilityService : AccessibilityService() {
         onStatusChange?.invoke(false, null)
     }
 
+    private var realtimePressJob: Job? = null
+    private val isRealtimePressing = AtomicBoolean(false)
+
+    fun startRealtimePress(xRatio: Float, yRatio: Float) {
+        stopRealtimePress()
+        isRealtimePressing.set(true)
+
+        realtimePressJob = serviceScope.launch {
+            while (isActive && isRealtimePressing.get()) {
+                val displayMetrics = resources.displayMetrics
+                val screenW = displayMetrics.widthPixels
+                val screenH = displayMetrics.heightPixels
+                val targetX = (xRatio * screenW).coerceIn(10f, screenW - 10f)
+                val targetY = (yRatio * screenH).coerceIn(10f, screenH - 10f)
+
+                // 250ms 단위 연속 스트로크로 끊김 없는 실시간 홀드 유지
+                executeHoldGesture(targetX, targetY, 250L)
+            }
+        }
+    }
+
+    fun stopRealtimePress() {
+        isRealtimePressing.set(false)
+        realtimePressJob?.cancel()
+        realtimePressJob = null
+    }
+
+    fun instantTap(xRatio: Float, yRatio: Float) {
+        serviceScope.launch {
+            val displayMetrics = resources.displayMetrics
+            val screenW = displayMetrics.widthPixels
+            val screenH = displayMetrics.heightPixels
+            val targetX = (xRatio * screenW).coerceIn(10f, screenW - 10f)
+            val targetY = (yRatio * screenH).coerceIn(10f, screenH - 10f)
+            executeHoldGesture(targetX, targetY, 50L)
+        }
+    }
+
     private suspend fun executeHoldGesture(x: Float, y: Float, durationMs: Long) {
         val safeDuration = durationMs.coerceAtLeast(50L)
         val path = Path().apply {
