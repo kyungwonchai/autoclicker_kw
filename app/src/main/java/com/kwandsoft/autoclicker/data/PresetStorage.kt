@@ -50,11 +50,11 @@ object PresetStorage {
         val jsonStr = prefs.getString(KEY_SLOTS, null)
         if (jsonStr == null) {
             return listOf(
-                ButtonSlot(slotId = 1, name = "1번 (15초 홀드)").apply {
-                    points.add(ClickPoint(id = 1, xRatio = 0.5f, yRatio = 0.45f, actionType = ActionType.HOLD, holdDurationMs = 15000L, delayAfterMs = 300L))
+                ButtonSlot(slotId = 1, name = "1번 (5초 홀드)").apply {
+                    points.add(ClickPoint(id = 1, xRatio = 0.5f, yRatio = 0.45f, actionType = ActionType.HOLD, holdDurationMs = 5000L, delayAfterMs = 500L))
                 },
-                ButtonSlot(slotId = 2, name = "2번 (단발 탭)").apply {
-                    points.add(ClickPoint(id = 1, xRatio = 0.5f, yRatio = 0.55f, actionType = ActionType.TAP, holdDurationMs = 50L, delayAfterMs = 500L))
+                ButtonSlot(slotId = 2, name = "2번 (단발 탭 1초)").apply {
+                    points.add(ClickPoint(id = 1, xRatio = 0.5f, yRatio = 0.55f, actionType = ActionType.TAP, holdDurationMs = 50L, delayAfterMs = 1000L))
                 },
                 ButtonSlot(slotId = 3, name = "3번 (연타 10회)").apply {
                     points.add(ClickPoint(id = 1, xRatio = 0.5f, yRatio = 0.65f, actionType = ActionType.MULTI_TAP, repeatCount = 10, delayAfterMs = 100L))

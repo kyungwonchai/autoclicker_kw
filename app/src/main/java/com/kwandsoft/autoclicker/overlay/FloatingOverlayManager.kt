@@ -292,8 +292,8 @@ class FloatingOverlayManager(
             xRatio = 0.5f,
             yRatio = 0.4f + (curSlot.points.size * 0.08f).coerceAtMost(0.4f),
             actionType = if (activeSlotIndex == 0) ActionType.HOLD else if (activeSlotIndex == 1) ActionType.TAP else ActionType.MULTI_TAP,
-            holdDurationMs = 15000L,
-            delayAfterMs = 300L,
+            holdDurationMs = 5000L,
+            delayAfterMs = if (activeSlotIndex == 1) 1000L else 500L,
             repeatCount = 5
         )
         curSlot.points.add(newPoint)
@@ -459,8 +459,8 @@ class FloatingOverlayManager(
                     else -> ActionType.HOLD
                 }
                 point.actionType = selectedType
-                val holdSec = holdInput.text.toString().toDoubleOrNull() ?: 15.0
-                val delaySec = delayInput.text.toString().toDoubleOrNull() ?: 0.3
+                val holdSec = holdInput.text.toString().toDoubleOrNull() ?: 5.0
+                val delaySec = delayInput.text.toString().toDoubleOrNull() ?: 1.0
                 point.holdDurationMs = (holdSec * 1000).toLong().coerceAtLeast(50L)
                 point.delayAfterMs = (delaySec * 1000).toLong().coerceAtLeast(50L)
                 point.repeatCount = countInput.text.toString().toIntOrNull() ?: 1

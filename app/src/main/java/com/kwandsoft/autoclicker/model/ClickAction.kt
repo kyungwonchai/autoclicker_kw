@@ -17,8 +17,8 @@ data class ClickPoint(
     var xRatio: Float = 0.5f,
     var yRatio: Float = 0.5f,
     var actionType: ActionType = ActionType.HOLD,
-    var holdDurationMs: Long = 15000L, // 기본 15초 꾹 누르기
-    var delayAfterMs: Long = 300L,     // 기본 0.3초 뗀 후 대기
+    var holdDurationMs: Long = 5000L,  // 기본 5초 꾹 누르기
+    var delayAfterMs: Long = 1000L,    // 기본 1초 뗀 후 대기
     var repeatCount: Int = 1           // 연타 횟수
 )
 
