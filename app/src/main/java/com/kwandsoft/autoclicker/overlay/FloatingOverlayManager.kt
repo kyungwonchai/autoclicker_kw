@@ -372,7 +372,7 @@ class FloatingOverlayManager(
     fun handleConfigurationChanged(newConfig: Configuration) {
         pointOverlays.forEach { it.updateScreenOrientation() }
         if (isDokkaebiMode) {
-            showDokkaebiTouchPads()
+            showDokkaebi4Buttons()
         }
     }
 
@@ -621,14 +621,20 @@ class FloatingOverlayManager(
         }
     }
 
-    // --- 👺 도깨비 모드 구현부 (딱 2개의 직관적인 반전 버튼) ---
+    // --- 👺 도깨비 모드 구현부 (상단 터치 2개 + 하단 타겟 2개 = 총 4개 버튼 세트) ---
     private fun restoreDokkaebiState() {
         val config = PresetStorage.loadDokkaebiConfig(context)
         isDokkaebiMode = config.optBoolean("enabled", false)
-        // 카트라이더 가로 모드 기본 좌/우 방향키 위치 (화면 좌측 하단 좌/우 키)
+        // 상단 내가 누를 버튼 2개 (가상 조작 패드)
+        dokkaebiTouchLX = config.optDouble("touchLX", 0.12).toFloat()
+        dokkaebiTouchLY = config.optDouble("touchLY", 0.62).toFloat()
+        dokkaebiTouchRX = config.optDouble("touchRX", 0.26).toFloat()
+        dokkaebiTouchRY = config.optDouble("touchRY", 0.62).toFloat()
+
+        // 하단 실제 클릭될 타겟 2개 (인게임 좌/우 방향키 위치)
         dokkaebiTargetLX = config.optDouble("targetLX", 0.12).toFloat()
         dokkaebiTargetLY = config.optDouble("targetLY", 0.82).toFloat()
-        dokkaebiTargetRX = config.optDouble("targetRX", 0.24).toFloat()
+        dokkaebiTargetRX = config.optDouble("targetRX", 0.26).toFloat()
         dokkaebiTargetRY = config.optDouble("targetRY", 0.82).toFloat()
 
         updateDokkaebiUI()
@@ -638,8 +644,8 @@ class FloatingOverlayManager(
         PresetStorage.saveDokkaebiConfig(
             context,
             enabled = isDokkaebiMode,
-            touchLX = dokkaebiTargetLX, touchLY = dokkaebiTargetLY,
-            touchRX = dokkaebiTargetRX, touchRY = dokkaebiTargetRY,
+            touchLX = dokkaebiTouchLX, touchLY = dokkaebiTouchLY,
+            touchRX = dokkaebiTouchRX, touchRY = dokkaebiTouchRY,
             targetLX = dokkaebiTargetLX, targetLY = dokkaebiTargetLY,
             targetRX = dokkaebiTargetRX, targetRY = dokkaebiTargetRY
         )
@@ -649,7 +655,7 @@ class FloatingOverlayManager(
         isDokkaebiMode = !isDokkaebiMode
         saveDokkaebiState()
         updateDokkaebiUI()
-        val status = if (isDokkaebiMode) "👺 도깨비 모드 ON (좌우 반전 버튼 활성화)" else "👺 도깨비 모드 OFF"
+        val status = if (isDokkaebiMode) "👺 도깨비 4버튼 모드 [ON] (상단 2개: 누름 / 하단 2개: 클릭 위치)" else "👺 도깨비 모드 [OFF]"
         Toast.makeText(context, status, Toast.LENGTH_SHORT).show()
     }
 
@@ -663,15 +669,17 @@ class FloatingOverlayManager(
         }
 
         if (isDokkaebiMode) {
-            showDokkaebiTouchPads()
+            showDokkaebi4Buttons()
         } else {
-            removeDokkaebiTouchPads()
+            removeDokkaebi4Buttons()
         }
     }
 
-    // 화면에 딱 2개의 도깨비 전용 버튼 표시 (좌측키 위에 올려둠: ◀ 누르면 실제 우측키가 눌리고, ▶ 누르면 실제 좌측키가 눌림)
-    private fun showDokkaebiTouchPads() {
-        removeDokkaebiTouchPads()
+    // 총 4개 버튼 화면 표시:
+    // [상단] 터치L (누르면 -> 하단 타겟R 클릭) / 터치R (누르면 -> 하단 타겟L 클릭)
+    // [하단] 타겟L (실제 좌방향키 위치) / 타겟R (실제 우방향키 위치)
+    private fun showDokkaebi4Buttons() {
+        removeDokkaebi4Buttons()
 
         val paramsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -684,150 +692,279 @@ class FloatingOverlayManager(
         val screenW = displayMetrics.widthPixels
         val screenH = displayMetrics.heightPixels
         val density = displayMetrics.density
-        val btnSize = (62 * density).toInt()
+        val padSize = (56 * density).toInt()
+        val targetSize = (44 * density).toInt()
 
-        // 1. [◀(우)] 버튼: 화면의 왼쪽 방향키 위에 얹어두고, 누르면 실제로는 [오른쪽 키]를 눌러줌
-        val lParams = WindowManager.LayoutParams(
-            btnSize, btnSize, paramsType,
+        // 1. [상단 왼쪽 터치 패드]: 내가 누르면 -> 하단 오른쪽 타겟 누름 (반전)
+        val tLParams = WindowManager.LayoutParams(
+            padSize, padSize, paramsType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (dokkaebiTargetLX * screenW).toInt() - btnSize / 2
-            y = (dokkaebiTargetLY * screenH).toInt() - btnSize / 2
+            x = (dokkaebiTouchLX * screenW).toInt() - padSize / 2
+            y = (dokkaebiTouchLY * screenH).toInt() - padSize / 2
         }
 
-        val lView = TextView(context).apply {
-            text = "◀\n(도깨비)"
+        val tLView = TextView(context).apply {
+            text = "◀(내손)\n➔[우]"
             setTextColor(Color.WHITE)
-            textSize = 11f
+            textSize = 10f
             gravity = Gravity.CENTER
             val bg = GradientDrawable().apply {
-                setColor(Color.parseColor("#E68E24AA")) // 선명한 반투명 보라
-                cornerRadius = 24f
+                setColor(Color.parseColor("#E68E24AA")) // 보라
+                cornerRadius = 20f
                 setStroke(3, Color.parseColor("#EA80FC"))
             }
             background = bg
         }
 
-        var startLX = 0; var startLY = 0; var touchLX = 0f; var touchLY = 0f; var isDragL = false
-        lView.setOnTouchListener { _, event ->
+        var startTLX = 0; var startTLY = 0; var touchTLX = 0f; var touchTLY = 0f; var isDragTL = false
+        tLView.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    startLX = lParams.x; startLY = lParams.y
-                    touchLX = event.rawX; touchLY = event.rawY
-                    isDragL = false
-                    lView.alpha = 0.6f
-                    // 왼쪽을 눌렀으므로 -> 실제 오른쪽 타겟 터치 (도깨비 반전)
+                    startTLX = tLParams.x; startTLY = tLParams.y
+                    touchTLX = event.rawX; touchTLY = event.rawY
+                    isDragTL = false
+                    tLView.alpha = 0.6f
+                    dokkaebiTargetRView?.alpha = 0.5f // 눌릴 타겟 강조
                     AutoClickAccessibilityService.instance?.startRealtimePress(dokkaebiTargetRX, dokkaebiTargetRY)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - touchLX).toInt()
-                    val dy = (event.rawY - touchLY).toInt()
+                    val dx = (event.rawX - touchTLX).toInt()
+                    val dy = (event.rawY - touchTLY).toInt()
                     if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-                        isDragL = true
-                        lParams.x = startLX + dx
-                        lParams.y = startLY + dy
-                        windowManager.updateViewLayout(lView, lParams)
+                        isDragTL = true
+                        tLParams.x = startTLX + dx
+                        tLParams.y = startTLY + dy
+                        windowManager.updateViewLayout(tLView, tLParams)
 
                         val curW = context.resources.displayMetrics.widthPixels
                         val curH = context.resources.displayMetrics.heightPixels
-                        dokkaebiTargetLX = ((lParams.x + btnSize / 2).toFloat() / curW).coerceIn(0f, 1f)
-                        dokkaebiTargetLY = ((lParams.y + btnSize / 2).toFloat() / curH).coerceIn(0f, 1f)
+                        dokkaebiTouchLX = ((tLParams.x + padSize / 2).toFloat() / curW).coerceIn(0f, 1f)
+                        dokkaebiTouchLY = ((tLParams.y + padSize / 2).toFloat() / curH).coerceIn(0f, 1f)
                     }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    lView.alpha = 1.0f
+                    tLView.alpha = 1.0f
+                    dokkaebiTargetRView?.alpha = 0.9f
                     AutoClickAccessibilityService.instance?.stopRealtimePress()
-                    if (isDragL) {
+                    if (isDragTL) {
                         saveDokkaebiState()
-                        Toast.makeText(context, "좌측 버튼 위치 저장됨", Toast.LENGTH_SHORT).show()
                     }
                     true
                 }
                 else -> false
             }
         }
+        windowManager.addView(tLView, tLParams)
+        dokkaebiTouchLView = tLView
 
-        windowManager.addView(lView, lParams)
-        dokkaebiTouchLView = lView
-
-        // 2. [(좌)▶] 버튼: 화면의 오른쪽 방향키 위에 얹어두고, 누르면 실제로는 [왼쪽 키]를 눌러줌
-        val rParams = WindowManager.LayoutParams(
-            btnSize, btnSize, paramsType,
+        // 2. [상단 오른쪽 터치 패드]: 내가 누르면 -> 하단 왼쪽 타겟 누름 (반전)
+        val tRParams = WindowManager.LayoutParams(
+            padSize, padSize, paramsType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (dokkaebiTargetRX * screenW).toInt() - btnSize / 2
-            y = (dokkaebiTargetRY * screenH).toInt() - btnSize / 2
+            x = (dokkaebiTouchRX * screenW).toInt() - padSize / 2
+            y = (dokkaebiTouchRY * screenH).toInt() - padSize / 2
         }
 
-        val rView = TextView(context).apply {
-            text = "▶\n(도깨비)"
+        val tRView = TextView(context).apply {
+            text = "(내손)▶\n[좌]➔"
             setTextColor(Color.WHITE)
-            textSize = 11f
+            textSize = 10f
             gravity = Gravity.CENTER
             val bg = GradientDrawable().apply {
-                setColor(Color.parseColor("#E68E24AA"))
-                cornerRadius = 24f
+                setColor(Color.parseColor("#E68E24AA")) // 보라
+                cornerRadius = 20f
                 setStroke(3, Color.parseColor("#EA80FC"))
             }
             background = bg
         }
 
-        var startRX = 0; var startRY = 0; var touchRX = 0f; var touchRY = 0f; var isDragR = false
-        rView.setOnTouchListener { _, event ->
+        var startTRX = 0; var startTRY = 0; var touchTRX = 0f; var touchTRY = 0f; var isDragTR = false
+        tRView.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    startRX = rParams.x; startRY = rParams.y
-                    touchRX = event.rawX; touchRY = event.rawY
-                    isDragR = false
-                    rView.alpha = 0.6f
-                    // 오른쪽을 눌렀으므로 -> 실제 왼쪽 타겟 터치 (도깨비 반전)
+                    startTRX = tRParams.x; startTRY = tRParams.y
+                    touchTRX = event.rawX; touchTRY = event.rawY
+                    isDragTR = false
+                    tRView.alpha = 0.6f
+                    dokkaebiTargetLView?.alpha = 0.5f // 눌릴 타겟 강조
                     AutoClickAccessibilityService.instance?.startRealtimePress(dokkaebiTargetLX, dokkaebiTargetLY)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - touchRX).toInt()
-                    val dy = (event.rawY - touchRY).toInt()
+                    val dx = (event.rawX - touchTRX).toInt()
+                    val dy = (event.rawY - touchTRY).toInt()
                     if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-                        isDragR = true
-                        rParams.x = startRX + dx
-                        rParams.y = startRY + dy
-                        windowManager.updateViewLayout(rView, rParams)
+                        isDragTR = true
+                        tRParams.x = startTRX + dx
+                        tRParams.y = startTRY + dy
+                        windowManager.updateViewLayout(tRView, tRParams)
 
                         val curW = context.resources.displayMetrics.widthPixels
                         val curH = context.resources.displayMetrics.heightPixels
-                        dokkaebiTargetRX = ((rParams.x + btnSize / 2).toFloat() / curW).coerceIn(0f, 1f)
-                        dokkaebiTargetRY = ((rParams.y + btnSize / 2).toFloat() / curH).coerceIn(0f, 1f)
+                        dokkaebiTouchRX = ((tRParams.x + padSize / 2).toFloat() / curW).coerceIn(0f, 1f)
+                        dokkaebiTouchRY = ((tRParams.y + padSize / 2).toFloat() / curH).coerceIn(0f, 1f)
                     }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    rView.alpha = 1.0f
+                    tRView.alpha = 1.0f
+                    dokkaebiTargetLView?.alpha = 0.9f
                     AutoClickAccessibilityService.instance?.stopRealtimePress()
-                    if (isDragR) {
+                    if (isDragTR) {
                         saveDokkaebiState()
-                        Toast.makeText(context, "우측 버튼 위치 저장됨", Toast.LENGTH_SHORT).show()
                     }
                     true
                 }
                 else -> false
             }
         }
+        windowManager.addView(tRView, tRParams)
+        dokkaebiTouchRView = tRView
 
-        windowManager.addView(rView, rParams)
-        dokkaebiTouchRView = rView
+        // 3. [하단 왼쪽 타겟 마커]: 게임 화면의 실제 좌방향키 위치 (드래그로 위치 지정)
+        val tgLParams = WindowManager.LayoutParams(
+            targetSize, targetSize, paramsType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = (dokkaebiTargetLX * screenW).toInt() - targetSize / 2
+            y = (dokkaebiTargetLY * screenH).toInt() - targetSize / 2
+        }
+
+        val tgLView = TextView(context).apply {
+            text = "타겟\n[좌]"
+            setTextColor(Color.WHITE)
+            textSize = 10f
+            gravity = Gravity.CENTER
+            val bg = GradientDrawable().apply {
+                setColor(Color.parseColor("#E60097A7")) // 청록색
+                cornerRadius = 16f
+                setStroke(2, Color.WHITE)
+            }
+            background = bg
+            alpha = 0.9f
+        }
+
+        var startTgLX = 0; var startTgLY = 0; var touchTgLX = 0f; var touchTgLY = 0f; var isDragTgL = false
+        tgLView.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    startTgLX = tgLParams.x; startTgLY = tgLParams.y
+                    touchTgLX = event.rawX; touchTgLY = event.rawY
+                    isDragTgL = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - touchTgLX).toInt()
+                    val dy = (event.rawY - touchTgLY).toInt()
+                    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                        isDragTgL = true
+                        tgLParams.x = startTgLX + dx
+                        tgLParams.y = startTgLY + dy
+                        windowManager.updateViewLayout(tgLView, tgLParams)
+
+                        val curW = context.resources.displayMetrics.widthPixels
+                        val curH = context.resources.displayMetrics.heightPixels
+                        dokkaebiTargetLX = ((tgLParams.x + targetSize / 2).toFloat() / curW).coerceIn(0f, 1f)
+                        dokkaebiTargetLY = ((tgLParams.y + targetSize / 2).toFloat() / curH).coerceIn(0f, 1f)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (isDragTgL) {
+                        saveDokkaebiState()
+                        Toast.makeText(context, "실제 [좌] 타겟 위치 저장됨", Toast.LENGTH_SHORT).show()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+        windowManager.addView(tgLView, tgLParams)
+        dokkaebiTargetLView = tgLView
+
+        // 4. [하단 오른쪽 타겟 마커]: 게임 화면의 실제 우방향키 위치 (드래그로 위치 지정)
+        val tgRParams = WindowManager.LayoutParams(
+            targetSize, targetSize, paramsType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = (dokkaebiTargetRX * screenW).toInt() - targetSize / 2
+            y = (dokkaebiTargetRY * screenH).toInt() - targetSize / 2
+        }
+
+        val tgRView = TextView(context).apply {
+            text = "타겟\n[우]"
+            setTextColor(Color.WHITE)
+            textSize = 10f
+            gravity = Gravity.CENTER
+            val bg = GradientDrawable().apply {
+                setColor(Color.parseColor("#E60097A7")) // 청록색
+                cornerRadius = 16f
+                setStroke(2, Color.WHITE)
+            }
+            background = bg
+            alpha = 0.9f
+        }
+
+        var startTgRX = 0; var startTgRY = 0; var touchTgRX = 0f; var touchTgRY = 0f; var isDragTgR = false
+        tgRView.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    startTgRX = tgRParams.x; startTgRY = tgRParams.y
+                    touchTgRX = event.rawX; touchTgRY = event.rawY
+                    isDragTgR = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - touchTgRX).toInt()
+                    val dy = (event.rawY - touchTgRY).toInt()
+                    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                        isDragTgR = true
+                        tgRParams.x = startTgRX + dx
+                        tgRParams.y = startTgRY + dy
+                        windowManager.updateViewLayout(tgRView, tgRParams)
+
+                        val curW = context.resources.displayMetrics.widthPixels
+                        val curH = context.resources.displayMetrics.heightPixels
+                        dokkaebiTargetRX = ((tgRParams.x + targetSize / 2).toFloat() / curW).coerceIn(0f, 1f)
+                        dokkaebiTargetRY = ((tgRParams.y + targetSize / 2).toFloat() / curH).coerceIn(0f, 1f)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (isDragTgR) {
+                        saveDokkaebiState()
+                        Toast.makeText(context, "실제 [우] 타겟 위치 저장됨", Toast.LENGTH_SHORT).show()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+        windowManager.addView(tgRView, tgRParams)
+        dokkaebiTargetRView = tgRView
     }
 
-    private fun removeDokkaebiTouchPads() {
+    private fun removeDokkaebi4Buttons() {
         dokkaebiTouchLView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
         dokkaebiTouchRView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
+        dokkaebiTargetLView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
+        dokkaebiTargetRView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
         dokkaebiTouchLView = null
         dokkaebiTouchRView = null
+        dokkaebiTargetLView = null
+        dokkaebiTargetRView = null
     }
 
     private fun showDokkaebiConfigDialog() {
@@ -843,8 +980,8 @@ class FloatingOverlayManager(
         }
 
         AlertDialog.Builder(context)
-            .setTitle("👺 도깨비 버튼 안내")
-            .setMessage("화면에 뜬 2개의 보라색 [◀] [▶] 버튼을 게임의 원래 좌/우 키 위치로 끌어서 올려두세요!\n\n• 위치 이동: 버튼을 길게 끌어서 이동하면 위치가 자동 저장됩니다.\n• 게임 중 터치: ◀를 누르면 우회전, ▶를 누르면 좌회전이 실행됩니다.")
+            .setTitle("👺 도깨비 4버튼 세트 안내")
+            .setMessage("화면에 뜬 4개 버튼을 자유롭게 원하는 위치로 드래그하세요:\n\n1. [상단 보라색 2개]: 내가 게임 중에 손으로 누를 버튼\n   • ◀(내손) 누르면 ➔ 하단 [우] 타겟이 눌림\n   • (내손)▶ 누르면 ➔ 하단 [좌] 타겟이 눌림\n\n2. [하단 청록색 2개]: 카트라이더 게임의 실제 좌/우 방향키 위에 올려둘 타겟 위치\n\n(모든 버튼은 드래그해서 놓으면 위치가 자동 저장됩니다)")
             .setPositiveButton("확인", null)
             .create().apply {
                 window?.setType(paramsType)
@@ -855,7 +992,7 @@ class FloatingOverlayManager(
     fun stopAll() {
         AutoClickAccessibilityService.instance?.stopClicking()
         AutoClickAccessibilityService.instance?.stopRealtimePress()
-        removeDokkaebiTouchPads()
+        removeDokkaebi4Buttons()
         pointOverlays.forEach { it.remove() }
         pointOverlays.clear()
         controlMenuView?.let {
