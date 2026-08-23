@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AutoClicker KW</string>
+    <string name="accessibility_service_description">오토클리커 KW의 자동 터치 및 제스처 실행을 위해 접근성 서비스 권한이 필요합니다. 화면 터치 제스처를 시뮬레이션하는 데만 사용됩니다.</string>
+</resources>
