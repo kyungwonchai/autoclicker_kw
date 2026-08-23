@@ -38,7 +38,7 @@
 
         <service
             android:name=".service.FloatingControlService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
