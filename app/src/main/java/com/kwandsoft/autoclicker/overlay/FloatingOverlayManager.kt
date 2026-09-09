@@ -1,17 +1,21 @@
 package com.kwandsoft.autoclicker.overlay
 
-import android.app.AlertDialog
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
-import android.view.*
-import android.widget.*
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
 import com.kwandsoft.autoclicker.data.PresetStorage
-import com.kwandsoft.autoclicker.model.ActionTrigger
-import com.kwandsoft.autoclicker.model.ActionType
 import com.kwandsoft.autoclicker.model.ButtonSlot
 import com.kwandsoft.autoclicker.model.ClickPoint
 import com.kwandsoft.autoclicker.service.AutoClickAccessibilityService
@@ -25,46 +29,22 @@ class FloatingOverlayManager(
     private var menuLayoutParams: WindowManager.LayoutParams? = null
 
     private val slots = mutableListOf<ButtonSlot>()
-    private var activeSlotIndex = 0 // 현재 화면에 표시/편집 중인 슬롯 인덱스 (0, 1, 2)
-    private val pointOverlays = mutableListOf<PointTargetOverlay>()
+    private var targetPoint: ClickPoint = ClickPoint()
+    private var pointOverlay: PointTargetOverlay? = null
 
     private var isCollapsed = false
     private var buttonsContainer: LinearLayout? = null
     private var toggleCollapseBtn: TextView? = null
-    private var slotIndicatorView: TextView? = null
 
     private val slotPlayButtons = mutableListOf<Button>()
-    private var dokkaebiBtn: Button? = null
-
-    // 도깨비 모드 상태 & 좌표 (좌측/우측 터치패드 & 실제 터치될 반대 타겟)
-    private var isDokkaebiMode = false
-    private var dokkaebiTouchLX = 0.20f
-    private var dokkaebiTouchLY = 0.80f
-    private var dokkaebiTouchRX = 0.80f
-    private var dokkaebiTouchRY = 0.80f
-    private var dokkaebiTargetLX = 0.20f
-    private var dokkaebiTargetLY = 0.80f
-    private var dokkaebiTargetRX = 0.80f
-    private var dokkaebiTargetRY = 0.80f
-
-    private var dokkaebiTouchLView: View? = null
-    private var dokkaebiTouchRView: View? = null
-    private var dokkaebiTargetLView: View? = null
-    private var dokkaebiTargetRView: View? = null
+    private var growthButton: Button? = null
 
     fun show() {
         if (controlMenuView != null) return
 
-        // 저장된 3개 슬롯 로드
         slots.clear()
-        slots.addAll(PresetStorage.loadSlots(context))
-        if (slots.isEmpty()) {
-            slots.add(ButtonSlot(1, "1번 (5초 홀드)"))
-            slots.add(ButtonSlot(2, "2번 (단발 탭 1초)"))
-            slots.add(ButtonSlot(3, "3번 (연타 10회)"))
-        }
-
-        activeSlotIndex = PresetStorage.getActiveSlot(context).coerceIn(0, slots.size - 1)
+        slots.addAll(PresetStorage.getSlots())
+        targetPoint = PresetStorage.loadTargetPoint(context)
         val (savedX, savedY) = PresetStorage.getMenuPosition(context)
 
         val paramsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -89,12 +69,12 @@ class FloatingOverlayManager(
         val container = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             val bg = GradientDrawable().apply {
-                setColor(Color.parseColor("#F0181818"))
-                cornerRadius = 18f
-                setStroke(2, Color.parseColor("#55FFFFFF"))
+                setColor(Color.parseColor("#E6181818"))
+                cornerRadius = 16f
+                setStroke(2, Color.parseColor("#44FFFFFF"))
             }
             background = bg
-            setPadding(10, 8, 10, 10)
+            setPadding(8, 6, 8, 8)
             elevation = 16f
         }
 
@@ -107,7 +87,7 @@ class FloatingOverlayManager(
             text = "⚡KW"
             setTextColor(Color.WHITE)
             textSize = 10f
-            setPadding(4, 2, 6, 2)
+            setPadding(4, 2, 4, 2)
         }
         setupDrag(dragHandle)
         topBar.addView(dragHandle)
@@ -116,7 +96,7 @@ class FloatingOverlayManager(
             text = "▲"
             setTextColor(Color.LTGRAY)
             textSize = 9f
-            setPadding(6, 2, 4, 2)
+            setPadding(4, 2, 4, 2)
             setOnClickListener {
                 toggleCollapse()
             }
@@ -133,18 +113,13 @@ class FloatingOverlayManager(
             setPadding(0, 2, 0, 0)
         }
 
-        // --- 1, 2, 3번 시작/중지 버튼 ---
+        // --- 15, 10, 5 버튼 생성 ---
         slotPlayButtons.clear()
-        for (i in 0 until 3) {
-            val slot = slots.getOrNull(i) ?: ButtonSlot(i + 1, "동작 ${i + 1}")
-            val btn = createButton("▶${i + 1}", slot.colorHex) {
+        for (i in 0 until slots.size) {
+            val slot = slots[i]
+            // 표시 라벨: "15" (15초), "10" (10초), "5" (5초)
+            val btn = createButton(slot.name, slot.colorHex) {
                 toggleSlotPlay(i)
-            }
-            btn.setOnLongClickListener {
-                // 길게 누르면 해당 슬롯 선택 및 설정 열기
-                selectSlot(i)
-                showSlotConfigDialog(slots[i])
-                true
             }
             slotPlayButtons.add(btn)
             buttonsContainer?.addView(btn)
@@ -153,60 +128,35 @@ class FloatingOverlayManager(
         // 구분선
         val divider = View(context).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2).apply {
-                setMargins(2, 3, 2, 3)
+                setMargins(2, 4, 2, 4)
             }
-            setBackgroundColor(Color.parseColor("#44FFFFFF"))
+            setBackgroundColor(Color.parseColor("#33FFFFFF"))
         }
         buttonsContainer?.addView(divider)
 
-        // 슬롯 선택/전환 버튼 (편집 대상 변경)
-        slotIndicatorView = TextView(context).apply {
-            text = "[${activeSlotIndex + 1}번]"
-            setTextColor(Color.parseColor(getCurrentSlot().colorHex))
-            textSize = 9f
-            gravity = Gravity.CENTER
-            setPadding(1, 1, 1, 1)
-            setOnClickListener {
-                // 슬롯 순환 전환 (1 -> 2 -> 3 -> 1)
-                val nextSlot = (activeSlotIndex + 1) % 3
-                selectSlot(nextSlot)
-                Toast.makeText(context, "${nextSlot + 1}번 슬롯 선택됨 (길게 누르면 상세설정)", Toast.LENGTH_SHORT).show()
-            }
-            setOnLongClickListener {
-                showSlotConfigDialog(getCurrentSlot())
-                true
+        // 캐릭키움 모드 토글 버튼 (🌱)
+        val growthModeBtn = createButton("🌱", "#2E7D32") {
+            val service = AutoClickAccessibilityService.instance
+            if (service != null) {
+                val newState = !service.isGrowthMode()
+                service.setGrowthMode(newState)
+                updateGrowthButtonState(newState)
+                val msg = if (newState) "🌱 [캐릭키움 모드] 활성화: 퀘스트 이동/스킵/전투 자동 순환" else "🌱 [캐릭키움 모드] 비활성화"
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             }
         }
-        buttonsContainer?.addView(slotIndicatorView)
+        growthButton = growthModeBtn
+        buttonsContainer?.addView(growthModeBtn)
 
-        // 포인트 추가 (+)
-        val addBtn = createButton("➕", "#37474F") {
-            addNewPointToCurrentSlot()
+        // 타겟 위치 초기화/중앙 이동 버튼 (🎯)
+        val centerTargetBtn = createButton("🎯", "#FF9800") {
+            targetPoint.xRatio = 0.5f
+            targetPoint.yRatio = 0.5f
+            saveTargetPoint()
+            pointOverlay?.updateScreenOrientation()
+            Toast.makeText(context, "🎯 타겟 위치가 화면 중앙으로 이동되었습니다.", Toast.LENGTH_SHORT).show()
         }
-        buttonsContainer?.addView(addBtn)
-
-        // 포인트 제거 (-)
-        val removeBtn = createButton("➖", "#455A64") {
-            removeLastPointFromCurrentSlot()
-        }
-        buttonsContainer?.addView(removeBtn)
-
-        // 도깨비 모드 (👺) 토글 버튼
-        dokkaebiBtn = createButton("👺", if (isDokkaebiMode) "#E040FB" else "#4A148C") {
-            toggleDokkaebiMode()
-        }.also { btn ->
-            btn.setOnLongClickListener {
-                showDokkaebiConfigDialog()
-                true
-            }
-        }
-        buttonsContainer?.addView(dokkaebiBtn)
-
-        // 슬롯 상세 설정 (⚙️)
-        val configBtn = createButton("⚙️", "#607D8B") {
-            showSlotConfigDialog(getCurrentSlot())
-        }
-        buttonsContainer?.addView(configBtn)
+        buttonsContainer?.addView(centerTargetBtn)
 
         // 닫기 (❌)
         val closeBtn = createButton("❌", "#F44336") {
@@ -220,52 +170,30 @@ class FloatingOverlayManager(
         controlMenuView = container
         windowManager.addView(controlMenuView, menuLayoutParams)
 
-        // 현재 슬롯의 타겟 포인트 표시
-        refreshTargetOverlays()
+        // 초기 캐릭키움 상태 반영
+        updateGrowthButtonState(AutoClickAccessibilityService.instance?.isGrowthMode() ?: false)
 
-        // 도깨비 모드 저장값 복원
-        restoreDokkaebiState()
+        // 단일 타겟 포인트 오버레이 표시
+        showTargetOverlay()
     }
 
-    private fun getCurrentSlot(): ButtonSlot {
-        return slots[activeSlotIndex]
+    private fun showTargetOverlay() {
+        pointOverlay?.remove()
+        pointOverlay = PointTargetOverlay(
+            context = context,
+            windowManager = windowManager,
+            point = targetPoint,
+            colorHex = "#FF9800",
+            onPositionUpdated = { updatedPoint ->
+                targetPoint = updatedPoint
+                saveTargetPoint()
+            }
+        )
+        pointOverlay?.show()
     }
 
-    private fun selectSlot(index: Int) {
-        activeSlotIndex = index
-        PresetStorage.saveActiveSlot(context, activeSlotIndex)
-        slotIndicatorView?.apply {
-            text = "[${activeSlotIndex + 1}번 편집]"
-            setTextColor(Color.parseColor(getCurrentSlot().colorHex))
-        }
-        refreshTargetOverlays()
-    }
-
-    private fun refreshTargetOverlays() {
-        pointOverlays.forEach { it.remove() }
-        pointOverlays.clear()
-
-        val curSlot = getCurrentSlot()
-        for (point in curSlot.points) {
-            val overlay = PointTargetOverlay(
-                context = context,
-                windowManager = windowManager,
-                point = point,
-                colorHex = curSlot.colorHex,
-                onPositionUpdated = {
-                    saveCurrentState()
-                },
-                onPointClicked = { clickedPoint ->
-                    showPointConfigDialog(clickedPoint)
-                }
-            )
-            pointOverlays.add(overlay)
-            overlay.show()
-        }
-    }
-
-    private fun saveCurrentState() {
-        PresetStorage.saveSlots(context, slots)
+    private fun saveTargetPoint() {
+        PresetStorage.saveTargetPoint(context, targetPoint)
     }
 
     private fun toggleCollapse() {
@@ -274,24 +202,23 @@ class FloatingOverlayManager(
         toggleCollapseBtn?.text = if (isCollapsed) "▼" else "▲"
     }
 
-    private fun createButton(iconText: String, hexColor: String, onClick: () -> Unit): Button {
+    private fun createButton(labelText: String, hexColor: String, onClick: () -> Unit): Button {
         val density = context.resources.displayMetrics.density
         val btnSize = (38 * density).toInt()
 
         return Button(context).apply {
-            this.text = iconText
-            this.textSize = 12f
-            this.setTextColor(Color.WHITE)
+            text = labelText
+            textSize = 12f
+            setTextColor(Color.WHITE)
             val bg = GradientDrawable().apply {
                 setColor(Color.parseColor(hexColor))
                 cornerRadius = 14f
             }
             background = bg
             setPadding(0, 0, 0, 0)
-            val layoutParams = LinearLayout.LayoutParams(btnSize, btnSize).apply {
+            layoutParams = LinearLayout.LayoutParams(btnSize, btnSize).apply {
                 setMargins(0, 3, 0, 3)
             }
-            this.layoutParams = layoutParams
             setOnClickListener { onClick() }
         }
     }
@@ -330,671 +257,108 @@ class FloatingOverlayManager(
         }
     }
 
-    private fun addNewPointToCurrentSlot() {
-        val curSlot = getCurrentSlot()
-        val nextId = (curSlot.points.maxOfOrNull { it.id } ?: 0) + 1
-        val newPoint = ClickPoint(
-            id = nextId,
-            xRatio = 0.5f,
-            yRatio = 0.4f + (curSlot.points.size * 0.08f).coerceAtMost(0.4f),
-            actionType = if (activeSlotIndex == 0) ActionType.HOLD else if (activeSlotIndex == 1) ActionType.TAP else ActionType.MULTI_TAP,
-            holdDurationMs = 5000L,
-            delayAfterMs = if (activeSlotIndex == 1) 1000L else 500L,
-            repeatCount = 5
-        )
-        curSlot.points.add(newPoint)
-        saveCurrentState()
-
-        val overlay = PointTargetOverlay(
-            context = context,
-            windowManager = windowManager,
-            point = newPoint,
-            colorHex = curSlot.colorHex,
-            onPositionUpdated = { saveCurrentState() },
-            onPointClicked = { clickedPoint -> showPointConfigDialog(clickedPoint) }
-        )
-        pointOverlays.add(overlay)
-        overlay.show()
-    }
-
-    private fun removeLastPointFromCurrentSlot() {
-        val curSlot = getCurrentSlot()
-        if (curSlot.points.isNotEmpty()) {
-            curSlot.points.removeAt(curSlot.points.size - 1)
-            saveCurrentState()
-            if (pointOverlays.isNotEmpty()) {
-                val lastOverlay = pointOverlays.removeAt(pointOverlays.size - 1)
-                lastOverlay.remove()
-            }
-        }
-    }
-
     fun handleConfigurationChanged(newConfig: Configuration) {
-        pointOverlays.forEach { it.updateScreenOrientation() }
-        if (isDokkaebiMode) {
-            showDokkaebi4Buttons()
-        }
-    }
-
-    // 포인트 개별 설정 다이얼로그 (동작 방식: 꾹 누르기 / 단발 탭 / 연타 선택 가능)
-    private fun showPointConfigDialog(point: ClickPoint) {
-        val paramsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
-        val scrollView = ScrollView(context)
-        val layout = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(40, 20, 40, 20)
-        }
-
-        val typeLabel = TextView(context).apply {
-            text = "📌 동작 종류"
-            textSize = 14f
-            setTextColor(Color.WHITE)
-        }
-        val radioGroup = RadioGroup(context).apply { orientation = RadioGroup.VERTICAL }
-
-        val rbHold = RadioButton(context).apply { text = "꾹 누르기 (홀드 - 지정 초 유지)"; id = View.generateViewId() }
-        val rbTap = RadioButton(context).apply { text = "단발 탭 (빠른 클릭 1회)"; id = View.generateViewId() }
-        val rbMultiTap = RadioButton(context).apply { text = "연타 (지정 횟수 빠른 연타)"; id = View.generateViewId() }
-
-        radioGroup.addView(rbHold)
-        radioGroup.addView(rbTap)
-        radioGroup.addView(rbMultiTap)
-
-        val holdLabel = TextView(context).apply { text = "① 꾹 누르고 있을 시간 (초)"; textSize = 13f; setPadding(0, 12, 0, 0) }
-        val holdInput = EditText(context).apply {
-            setText((point.holdDurationMs / 1000.0).toString())
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-
-        val countLabel = TextView(context).apply { text = "② 연타 횟수 (회)"; textSize = 13f; setPadding(0, 12, 0, 0) }
-        val countInput = EditText(context).apply {
-            setText(point.repeatCount.toString())
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        }
-
-        val delayLabel = TextView(context).apply { text = "③ 뗀 후 대기 시간 (초)"; textSize = 13f; setPadding(0, 12, 0, 0) }
-        val delayInput = EditText(context).apply {
-            setText((point.delayAfterMs / 1000.0).toString())
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-
-        fun updateInputVisibility(actionType: ActionType) {
-            when (actionType) {
-                ActionType.HOLD -> {
-                    holdLabel.visibility = View.VISIBLE
-                    holdInput.visibility = View.VISIBLE
-                    countLabel.visibility = View.GONE
-                    countInput.visibility = View.GONE
-                    delayLabel.text = "② 뗀 후 다음 누르기까지 대기 (초)"
-                }
-                ActionType.TAP -> {
-                    holdLabel.visibility = View.GONE
-                    holdInput.visibility = View.GONE
-                    countLabel.visibility = View.GONE
-                    countInput.visibility = View.GONE
-                    delayLabel.text = "① 탭 후 다음 동작까지 대기 (초)"
-                }
-                ActionType.MULTI_TAP -> {
-                    holdLabel.visibility = View.GONE
-                    holdInput.visibility = View.GONE
-                    countLabel.visibility = View.VISIBLE
-                    countInput.visibility = View.VISIBLE
-                    delayLabel.text = "② 연타 사이 간격/대기 (초)"
-                }
-            }
-        }
-
-        radioGroup.setOnCheckedChangeListener { _, checkedId ->
-            val type = when (checkedId) {
-                rbHold.id -> ActionType.HOLD
-                rbTap.id -> ActionType.TAP
-                rbMultiTap.id -> ActionType.MULTI_TAP
-                else -> ActionType.HOLD
-            }
-            updateInputVisibility(type)
-        }
-
-        when (point.actionType) {
-            ActionType.HOLD -> radioGroup.check(rbHold.id)
-            ActionType.TAP -> radioGroup.check(rbTap.id)
-            ActionType.MULTI_TAP -> radioGroup.check(rbMultiTap.id)
-        }
-        updateInputVisibility(point.actionType)
-
-        layout.addView(typeLabel)
-        layout.addView(radioGroup)
-        layout.addView(holdLabel)
-        layout.addView(holdInput)
-        layout.addView(countLabel)
-        layout.addView(countInput)
-        layout.addView(delayLabel)
-        layout.addView(delayInput)
-
-        scrollView.addView(layout)
-
-        val dialog = AlertDialog.Builder(context)
-            .setTitle("포인트 #${point.id} 동작 설정")
-            .setView(scrollView)
-            .setPositiveButton("저장") { _, _ ->
-                val selectedType = when (radioGroup.checkedRadioButtonId) {
-                    rbHold.id -> ActionType.HOLD
-                    rbTap.id -> ActionType.TAP
-                    rbMultiTap.id -> ActionType.MULTI_TAP
-                    else -> ActionType.HOLD
-                }
-                point.actionType = selectedType
-                val holdSec = holdInput.text.toString().toDoubleOrNull() ?: 5.0
-                val delaySec = delayInput.text.toString().toDoubleOrNull() ?: 1.0
-                point.holdDurationMs = (holdSec * 1000).toLong().coerceAtLeast(50L)
-                point.delayAfterMs = (delaySec * 1000).toLong().coerceAtLeast(50L)
-                point.repeatCount = countInput.text.toString().toIntOrNull() ?: 1
-
-                saveCurrentState()
-                pointOverlays.find { it.point.id == point.id }?.updateLabel()
-                Toast.makeText(context, "포인트 #${point.id} 설정 저장됨", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("취소", null)
-            .create()
-
-        dialog.window?.setType(paramsType)
-        dialog.show()
-    }
-
-    // 슬롯 전체 설정 다이얼로그 (버튼 이름, 루프 대기시간)
-    private fun showSlotConfigDialog(slot: ButtonSlot) {
-        val paramsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
-        val scrollView = ScrollView(context)
-        val layout = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(40, 20, 40, 20)
-        }
-
-        val nameLabel = TextView(context).apply { text = "버튼 이름 / 메모:"; textSize = 13f }
-        val nameInput = EditText(context).apply { setText(slot.name) }
-
-        val loopInfoLabel = TextView(context).apply {
-            text = "⚡ 동작 모드: ♾️ 무한 반복 (중지 누를 때까지 계속 실행)"
-            textSize = 13f
-            setTextColor(Color.parseColor("#4CAF50"))
-            setPadding(0, 16, 0, 8)
-        }
-
-        val loopDelayLabel = TextView(context).apply {
-            text = "한 사이클 끝난 후 다음 반복까지 대기 (초):"
-            textSize = 13f
-            setPadding(0, 10, 0, 0)
-        }
-        val loopDelayInput = EditText(context).apply {
-            setText((slot.loopDelayMs / 1000.0).toString())
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        }
-
-        layout.addView(nameLabel)
-        layout.addView(nameInput)
-        layout.addView(loopInfoLabel)
-        layout.addView(loopDelayLabel)
-        layout.addView(loopDelayInput)
-
-        scrollView.addView(layout)
-
-        val dialog = AlertDialog.Builder(context)
-            .setTitle("[버튼 ${slot.slotId}] 설정")
-            .setView(scrollView)
-            .setPositiveButton("저장") { _, _ ->
-                slot.name = nameInput.text.toString().trim()
-                val loopDelaySec = loopDelayInput.text.toString().toDoubleOrNull() ?: 0.0
-                slot.loopDelayMs = (loopDelaySec * 1000).toLong()
-
-                saveCurrentState()
-                Toast.makeText(context, "${slot.name} 저장 완료", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("취소", null)
-            .create()
-
-        dialog.window?.setType(paramsType)
-        dialog.show()
+        pointOverlay?.updateScreenOrientation()
     }
 
     private fun toggleSlotPlay(slotIndex: Int) {
-        val service = AutoClickAccessibilityService.instance
-        if (service == null) {
-            Toast.makeText(context, "접근성 서비스를 먼저 켜주세요!", Toast.LENGTH_SHORT).show()
-            return
-        }
-
+        val service = AutoClickAccessibilityService.instance ?: return
         val runningSlotId = service.getRunningSlotId()
         val targetSlot = slots[slotIndex]
 
-        if (runningSlotId == targetSlot.slotId) {
-            service.stopClicking { running, activeId ->
-                updatePlayStates(running, activeId)
-            }
-        } else {
-            if (targetSlot.points.isEmpty()) {
-                selectSlot(slotIndex)
-                Toast.makeText(context, "${targetSlot.slotId}번 슬롯에 ➕ 버튼으로 포인트를 먼저 추가해주세요.", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            selectSlot(slotIndex)
-            service.startSlotExecution(
-                slot = targetSlot,
-                onStatusChange = { running, activeId ->
+        if (runningSlotId != null) {
+            if (runningSlotId == targetSlot.slotId) {
+                // 현재 실행 중인 버튼을 누르면 즉시 중지
+                service.stopClicking { running, activeId ->
                     updatePlayStates(running, activeId)
                 }
-            )
-            updatePlayStates(true, targetSlot.slotId)
+                updatePlayStates(false, null)
+            }
+            return
         }
+
+        // 실행 중인 동작이 없을 때만 새 동작 시작
+        service.startSlotExecution(
+            slot = targetSlot,
+            point = targetPoint,
+            onStatusChange = { running, activeId ->
+                updatePlayStates(running, activeId)
+            }
+        )
+        updatePlayStates(true, targetSlot.slotId)
     }
 
     private fun updatePlayStates(running: Boolean, activeSlotId: Int?) {
         for (i in 0 until slotPlayButtons.size) {
             val btn = slotPlayButtons[i]
             val slot = slots.getOrNull(i) ?: continue
-            if (running && activeSlotId == slot.slotId) {
-                btn.text = "■${i + 1}"
-                val bg = GradientDrawable().apply {
-                    setColor(Color.parseColor("#E91E63"))
-                    cornerRadius = 14f
+
+            if (running) {
+                if (activeSlotId == slot.slotId) {
+                    // 실행 중인 본인 버튼 -> 빨간색 중지(■) 활성화
+                    btn.text = "■${slot.name}"
+                    val bg = GradientDrawable().apply {
+                        setColor(Color.parseColor("#D50000"))
+                        cornerRadius = 14f
+                        setStroke(2, Color.WHITE)
+                    }
+                    btn.background = bg
+                    btn.alpha = 1.0f
+                    btn.isEnabled = true
+                } else {
+                    // 실행 중이 아닌 다른 버튼 -> 회색 비활성화 (클릭 불가)
+                    btn.text = slot.name
+                    val bg = GradientDrawable().apply {
+                        setColor(Color.parseColor("#424242"))
+                        cornerRadius = 14f
+                    }
+                    btn.background = bg
+                    btn.alpha = 0.35f
+                    btn.isEnabled = false
                 }
-                btn.background = bg
             } else {
-                btn.text = "▶${i + 1}"
+                // 모두 정지 상태 -> 모든 버튼 원래 색상으로 활성화
+                btn.text = slot.name
                 val bg = GradientDrawable().apply {
                     setColor(Color.parseColor(slot.colorHex))
                     cornerRadius = 14f
                 }
                 btn.background = bg
+                btn.alpha = 1.0f
+                btn.isEnabled = true
+            }
+        }
+        pointOverlay?.updateColor(if (running) "#D50000" else "#FF9800")
+    }
+
+    private fun updateGrowthButtonState(enabled: Boolean) {
+        growthButton?.let { btn ->
+            if (enabled) {
+                btn.text = "🌱ON"
+                val bg = GradientDrawable().apply {
+                    setColor(Color.parseColor("#43A047"))
+                    cornerRadius = 14f
+                    setStroke(2, Color.WHITE)
+                }
+                btn.background = bg
+                btn.alpha = 1.0f
+            } else {
+                btn.text = "🌱"
+                val bg = GradientDrawable().apply {
+                    setColor(Color.parseColor("#37474F"))
+                    cornerRadius = 14f
+                }
+                btn.background = bg
+                btn.alpha = 0.8f
             }
         }
     }
 
-    // --- 👺 도깨비 모드 구현부 (상단 터치 2개 + 하단 타겟 2개 = 총 4개 버튼 세트) ---
-    private fun restoreDokkaebiState() {
-        val config = PresetStorage.loadDokkaebiConfig(context)
-        isDokkaebiMode = config.optBoolean("enabled", false)
-        // 상단 내가 누를 버튼 2개 (가상 조작 패드)
-        dokkaebiTouchLX = config.optDouble("touchLX", 0.12).toFloat()
-        dokkaebiTouchLY = config.optDouble("touchLY", 0.62).toFloat()
-        dokkaebiTouchRX = config.optDouble("touchRX", 0.26).toFloat()
-        dokkaebiTouchRY = config.optDouble("touchRY", 0.62).toFloat()
-
-        // 하단 실제 클릭될 타겟 2개 (인게임 좌/우 방향키 위치)
-        dokkaebiTargetLX = config.optDouble("targetLX", 0.12).toFloat()
-        dokkaebiTargetLY = config.optDouble("targetLY", 0.82).toFloat()
-        dokkaebiTargetRX = config.optDouble("targetRX", 0.26).toFloat()
-        dokkaebiTargetRY = config.optDouble("targetRY", 0.82).toFloat()
-
-        updateDokkaebiUI()
-    }
-
-    private fun saveDokkaebiState() {
-        PresetStorage.saveDokkaebiConfig(
-            context,
-            enabled = isDokkaebiMode,
-            touchLX = dokkaebiTouchLX, touchLY = dokkaebiTouchLY,
-            touchRX = dokkaebiTouchRX, touchRY = dokkaebiTouchRY,
-            targetLX = dokkaebiTargetLX, targetLY = dokkaebiTargetLY,
-            targetRX = dokkaebiTargetRX, targetRY = dokkaebiTargetRY
-        )
-    }
-
-    private fun toggleDokkaebiMode() {
-        isDokkaebiMode = !isDokkaebiMode
-        saveDokkaebiState()
-        updateDokkaebiUI()
-        val status = if (isDokkaebiMode) "👺 도깨비 4버튼 모드 [ON] (상단 2개: 누름 / 하단 2개: 클릭 위치)" else "👺 도깨비 모드 [OFF]"
-        Toast.makeText(context, status, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun updateDokkaebiUI() {
-        dokkaebiBtn?.apply {
-            val bg = GradientDrawable().apply {
-                setColor(if (isDokkaebiMode) Color.parseColor("#E040FB") else Color.parseColor("#4A148C"))
-                cornerRadius = 14f
-            }
-            background = bg
-        }
-
-        if (isDokkaebiMode) {
-            showDokkaebi4Buttons()
-        } else {
-            removeDokkaebi4Buttons()
-        }
-    }
-
-    // 총 4개 버튼 화면 표시:
-    // [상단] 터치L (누르면 -> 하단 타겟R 클릭) / 터치R (누르면 -> 하단 타겟L 클릭)
-    // [하단] 타겟L (실제 좌방향키 위치) / 타겟R (실제 우방향키 위치)
-    private fun showDokkaebi4Buttons() {
-        removeDokkaebi4Buttons()
-
-        val paramsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
-        val displayMetrics = context.resources.displayMetrics
-        val screenW = displayMetrics.widthPixels
-        val screenH = displayMetrics.heightPixels
-        val density = displayMetrics.density
-        val padSize = (56 * density).toInt()
-        val targetSize = (44 * density).toInt()
-
-        // 1. [상단 왼쪽 터치 패드]: 내가 누르면 -> 하단 오른쪽 타겟 누름 (반전)
-        val tLParams = WindowManager.LayoutParams(
-            padSize, padSize, paramsType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = (dokkaebiTouchLX * screenW).toInt() - padSize / 2
-            y = (dokkaebiTouchLY * screenH).toInt() - padSize / 2
-        }
-
-        val tLView = TextView(context).apply {
-            text = "◀(내손)\n➔[우]"
-            setTextColor(Color.WHITE)
-            textSize = 10f
-            gravity = Gravity.CENTER
-            val bg = GradientDrawable().apply {
-                setColor(Color.parseColor("#E68E24AA")) // 보라
-                cornerRadius = 20f
-                setStroke(3, Color.parseColor("#EA80FC"))
-            }
-            background = bg
-        }
-
-        var startTLX = 0; var startTLY = 0; var touchTLX = 0f; var touchTLY = 0f; var isDragTL = false
-        tLView.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    startTLX = tLParams.x; startTLY = tLParams.y
-                    touchTLX = event.rawX; touchTLY = event.rawY
-                    isDragTL = false
-                    tLView.alpha = 0.6f
-                    dokkaebiTargetRView?.alpha = 0.5f // 눌릴 타겟 강조
-                    AutoClickAccessibilityService.instance?.startRealtimePress(dokkaebiTargetRX, dokkaebiTargetRY)
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - touchTLX).toInt()
-                    val dy = (event.rawY - touchTLY).toInt()
-                    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-                        isDragTL = true
-                        tLParams.x = startTLX + dx
-                        tLParams.y = startTLY + dy
-                        windowManager.updateViewLayout(tLView, tLParams)
-
-                        val curW = context.resources.displayMetrics.widthPixels
-                        val curH = context.resources.displayMetrics.heightPixels
-                        dokkaebiTouchLX = ((tLParams.x + padSize / 2).toFloat() / curW).coerceIn(0f, 1f)
-                        dokkaebiTouchLY = ((tLParams.y + padSize / 2).toFloat() / curH).coerceIn(0f, 1f)
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    tLView.alpha = 1.0f
-                    dokkaebiTargetRView?.alpha = 0.9f
-                    AutoClickAccessibilityService.instance?.stopRealtimePress()
-                    if (isDragTL) {
-                        saveDokkaebiState()
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
-        windowManager.addView(tLView, tLParams)
-        dokkaebiTouchLView = tLView
-
-        // 2. [상단 오른쪽 터치 패드]: 내가 누르면 -> 하단 왼쪽 타겟 누름 (반전)
-        val tRParams = WindowManager.LayoutParams(
-            padSize, padSize, paramsType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = (dokkaebiTouchRX * screenW).toInt() - padSize / 2
-            y = (dokkaebiTouchRY * screenH).toInt() - padSize / 2
-        }
-
-        val tRView = TextView(context).apply {
-            text = "(내손)▶\n[좌]➔"
-            setTextColor(Color.WHITE)
-            textSize = 10f
-            gravity = Gravity.CENTER
-            val bg = GradientDrawable().apply {
-                setColor(Color.parseColor("#E68E24AA")) // 보라
-                cornerRadius = 20f
-                setStroke(3, Color.parseColor("#EA80FC"))
-            }
-            background = bg
-        }
-
-        var startTRX = 0; var startTRY = 0; var touchTRX = 0f; var touchTRY = 0f; var isDragTR = false
-        tRView.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    startTRX = tRParams.x; startTRY = tRParams.y
-                    touchTRX = event.rawX; touchTRY = event.rawY
-                    isDragTR = false
-                    tRView.alpha = 0.6f
-                    dokkaebiTargetLView?.alpha = 0.5f // 눌릴 타겟 강조
-                    AutoClickAccessibilityService.instance?.startRealtimePress(dokkaebiTargetLX, dokkaebiTargetLY)
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - touchTRX).toInt()
-                    val dy = (event.rawY - touchTRY).toInt()
-                    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-                        isDragTR = true
-                        tRParams.x = startTRX + dx
-                        tRParams.y = startTRY + dy
-                        windowManager.updateViewLayout(tRView, tRParams)
-
-                        val curW = context.resources.displayMetrics.widthPixels
-                        val curH = context.resources.displayMetrics.heightPixels
-                        dokkaebiTouchRX = ((tRParams.x + padSize / 2).toFloat() / curW).coerceIn(0f, 1f)
-                        dokkaebiTouchRY = ((tRParams.y + padSize / 2).toFloat() / curH).coerceIn(0f, 1f)
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    tRView.alpha = 1.0f
-                    dokkaebiTargetLView?.alpha = 0.9f
-                    AutoClickAccessibilityService.instance?.stopRealtimePress()
-                    if (isDragTR) {
-                        saveDokkaebiState()
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
-        windowManager.addView(tRView, tRParams)
-        dokkaebiTouchRView = tRView
-
-        // 3. [하단 왼쪽 타겟 마커]: 게임 화면의 실제 좌방향키 위치 (드래그로 위치 지정)
-        val tgLParams = WindowManager.LayoutParams(
-            targetSize, targetSize, paramsType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = (dokkaebiTargetLX * screenW).toInt() - targetSize / 2
-            y = (dokkaebiTargetLY * screenH).toInt() - targetSize / 2
-        }
-
-        val tgLView = TextView(context).apply {
-            text = "타겟\n[좌]"
-            setTextColor(Color.WHITE)
-            textSize = 10f
-            gravity = Gravity.CENTER
-            val bg = GradientDrawable().apply {
-                setColor(Color.parseColor("#E60097A7")) // 청록색
-                cornerRadius = 16f
-                setStroke(2, Color.WHITE)
-            }
-            background = bg
-            alpha = 0.9f
-        }
-
-        var startTgLX = 0; var startTgLY = 0; var touchTgLX = 0f; var touchTgLY = 0f; var isDragTgL = false
-        tgLView.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    startTgLX = tgLParams.x; startTgLY = tgLParams.y
-                    touchTgLX = event.rawX; touchTgLY = event.rawY
-                    isDragTgL = false
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - touchTgLX).toInt()
-                    val dy = (event.rawY - touchTgLY).toInt()
-                    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-                        isDragTgL = true
-                        tgLParams.x = startTgLX + dx
-                        tgLParams.y = startTgLY + dy
-                        windowManager.updateViewLayout(tgLView, tgLParams)
-
-                        val curW = context.resources.displayMetrics.widthPixels
-                        val curH = context.resources.displayMetrics.heightPixels
-                        dokkaebiTargetLX = ((tgLParams.x + targetSize / 2).toFloat() / curW).coerceIn(0f, 1f)
-                        dokkaebiTargetLY = ((tgLParams.y + targetSize / 2).toFloat() / curH).coerceIn(0f, 1f)
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (isDragTgL) {
-                        saveDokkaebiState()
-                        Toast.makeText(context, "실제 [좌] 타겟 위치 저장됨", Toast.LENGTH_SHORT).show()
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
-        windowManager.addView(tgLView, tgLParams)
-        dokkaebiTargetLView = tgLView
-
-        // 4. [하단 오른쪽 타겟 마커]: 게임 화면의 실제 우방향키 위치 (드래그로 위치 지정)
-        val tgRParams = WindowManager.LayoutParams(
-            targetSize, targetSize, paramsType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = (dokkaebiTargetRX * screenW).toInt() - targetSize / 2
-            y = (dokkaebiTargetRY * screenH).toInt() - targetSize / 2
-        }
-
-        val tgRView = TextView(context).apply {
-            text = "타겟\n[우]"
-            setTextColor(Color.WHITE)
-            textSize = 10f
-            gravity = Gravity.CENTER
-            val bg = GradientDrawable().apply {
-                setColor(Color.parseColor("#E60097A7")) // 청록색
-                cornerRadius = 16f
-                setStroke(2, Color.WHITE)
-            }
-            background = bg
-            alpha = 0.9f
-        }
-
-        var startTgRX = 0; var startTgRY = 0; var touchTgRX = 0f; var touchTgRY = 0f; var isDragTgR = false
-        tgRView.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    startTgRX = tgRParams.x; startTgRY = tgRParams.y
-                    touchTgRX = event.rawX; touchTgRY = event.rawY
-                    isDragTgR = false
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - touchTgRX).toInt()
-                    val dy = (event.rawY - touchTgRY).toInt()
-                    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-                        isDragTgR = true
-                        tgRParams.x = startTgRX + dx
-                        tgRParams.y = startTgRY + dy
-                        windowManager.updateViewLayout(tgRView, tgRParams)
-
-                        val curW = context.resources.displayMetrics.widthPixels
-                        val curH = context.resources.displayMetrics.heightPixels
-                        dokkaebiTargetRX = ((tgRParams.x + targetSize / 2).toFloat() / curW).coerceIn(0f, 1f)
-                        dokkaebiTargetRY = ((tgRParams.y + targetSize / 2).toFloat() / curH).coerceIn(0f, 1f)
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (isDragTgR) {
-                        saveDokkaebiState()
-                        Toast.makeText(context, "실제 [우] 타겟 위치 저장됨", Toast.LENGTH_SHORT).show()
-                    }
-                    true
-                }
-                else -> false
-            }
-        }
-        windowManager.addView(tgRView, tgRParams)
-        dokkaebiTargetRView = tgRView
-    }
-
-    private fun removeDokkaebi4Buttons() {
-        dokkaebiTouchLView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
-        dokkaebiTouchRView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
-        dokkaebiTargetLView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
-        dokkaebiTargetRView?.let { try { windowManager.removeView(it) } catch (e: Exception) {} }
-        dokkaebiTouchLView = null
-        dokkaebiTouchRView = null
-        dokkaebiTargetLView = null
-        dokkaebiTargetRView = null
-    }
-
-    private fun showDokkaebiConfigDialog() {
-        val paramsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
-        if (!isDokkaebiMode) {
-            toggleDokkaebiMode()
-        }
-
-        AlertDialog.Builder(context)
-            .setTitle("👺 도깨비 4버튼 세트 안내")
-            .setMessage("화면에 뜬 4개 버튼을 자유롭게 원하는 위치로 드래그하세요:\n\n1. [상단 보라색 2개]: 내가 게임 중에 손으로 누를 버튼\n   • ◀(내손) 누르면 ➔ 하단 [우] 타겟이 눌림\n   • (내손)▶ 누르면 ➔ 하단 [좌] 타겟이 눌림\n\n2. [하단 청록색 2개]: 카트라이더 게임의 실제 좌/우 방향키 위에 올려둘 타겟 위치\n\n(모든 버튼은 드래그해서 놓으면 위치가 자동 저장됩니다)")
-            .setPositiveButton("확인", null)
-            .create().apply {
-                window?.setType(paramsType)
-                show()
-            }
-    }
 
     fun stopAll() {
         AutoClickAccessibilityService.instance?.stopClicking()
-        AutoClickAccessibilityService.instance?.stopRealtimePress()
-        removeDokkaebi4Buttons()
-        pointOverlays.forEach { it.remove() }
-        pointOverlays.clear()
+        pointOverlay?.remove()
+        pointOverlay = null
         controlMenuView?.let {
             try {
                 windowManager.removeView(it)
@@ -1004,5 +368,6 @@ class FloatingOverlayManager(
         }
     }
 }
+
 
 

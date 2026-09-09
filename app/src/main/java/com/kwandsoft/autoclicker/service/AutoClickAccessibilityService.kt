@@ -219,7 +219,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
             
             // 1. 화면이 마을인지 던전인지 엄격히 판별
             val isTown = checkTownScreenInBitmap(bitmap)
-            val isMovingInTown = if (isTown) checkMovingInTownInBitmap(bitmap) else false
 
             // 던전 내부 판별 (마을이 아니고 + 미니맵 핀이나 보스가 있을 때)
             val inDungeon = !isTown && (checkDungeonEntranceInBitmap(bitmap) || checkBossDevilInBitmap(bitmap) || checkMiniMapPinInBitmap(bitmap))
@@ -247,8 +246,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
             val isQuestSelectPopup = if (isGrowthModeEnabled.get() && !isPickupHand && !isSkipDialog && !isConfirmPopup) checkQuestSelectPopupInBitmap(bitmap) else false
             // 던전 입장 / 전투시작 버튼 ([입장])
             val isBattleStart = if (isGrowthModeEnabled.get() && !isPickupHand && !isSkipDialog && !isConfirmPopup && !isQuestSelectPopup) checkBattleStartInBitmap(bitmap) else false
-            // 마을 퀘스트 1순위: 마을 상태(isTown)이고 대화/확인/퀘스트팝업/전투시작 팝업이 없고, '이동 중'이 아닐 때만 터치!
-            val isQuestAvailable = if (isGrowthModeEnabled.get() && isTown && !isMovingInTown && !isSkipDialog && !isConfirmPopup && !isQuestSelectPopup && !isBattleStart) checkQuestAuraInBitmap(bitmap) else false
+            // 마을 퀘스트 1순위: 마을 상태(isTown)이고 대화/확인/퀘스트팝업/전투시작 팝업이 없을 때 아우라 감지 시 즉시 터치!
+            val isQuestAvailable = if (isGrowthModeEnabled.get() && isTown && !isSkipDialog && !isConfirmPopup && !isQuestSelectPopup && !isBattleStart) checkQuestAuraInBitmap(bitmap) else false
             
             if (isPickupHand) {
                 bitmap.recycle()
@@ -314,13 +313,13 @@ class AutoClickAccessibilityService : AccessibilityService() {
             } else if (isQuestAvailable) {
                 bitmap.recycle()
                 val now = System.currentTimeMillis()
-                // 퀘스트 1회 터치 후 3.5초간 재클릭 방지하고 대기
-                if (now - lastTownQuestTime > 3500L) {
+                // 퀘스트 1회 터치 후 4.0초간 재클릭 방지하고 대기
+                if (now - lastTownQuestTime > 4000L) {
                     lastTownQuestTime = now
                     Log.d(TAG, "🌱 [캐릭키움 1순위] 우상단 최상단 퀘스트(노란 아우라 박스) 1회 클릭 후 이동 대기")
-                    val questX = screenW * 0.840f
-                    val questY = screenH * 0.200f
-                    tapSingle(questX, questY, 50L)
+                    val questX = screenW * 0.826f
+                    val questY = screenH * 0.202f
+                    tapSingle(questX, questY, 60L)
                 }
             } else if (isRetryVisible) {
                 bitmap.recycle()
@@ -556,39 +555,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
         if (total == 0) return false
         val ratio = whiteText.toFloat() / total.toFloat()
         return ratio > 0.04f
-    }
-
-    private fun checkMovingInTownInBitmap(bitmap: Bitmap): Boolean {
-        val w = bitmap.width
-        val h = bitmap.height
-
-        // 퀘스트 박스 우측 '이동 중' 순수 노란색 텍스트 영역 (x: 84% ~ 92%, y: 16% ~ 22%)
-        val startX = (w * 0.84f).toInt().coerceIn(0, w - 1)
-        val endX = (w * 0.92f).toInt().coerceIn(0, w)
-        val startY = (h * 0.16f).toInt().coerceIn(0, h - 1)
-        val endY = (h * 0.22f).toInt().coerceIn(0, h)
-
-        var total = 0
-        var yellowCount = 0
-
-        for (y in startY until endY step 2) {
-            for (x in startX until endX step 2) {
-                total++
-                val p = bitmap.getPixel(x, y)
-                val r = Color.red(p)
-                val g = Color.green(p)
-                val b = Color.blue(p)
-
-                // 이동 중 텍스트의 고유한 밝은 노란색 (R > 210, G > 190, B < 70)
-                if (r > 210 && g > 190 && b < 70) {
-                    yellowCount++
-                }
-            }
-        }
-
-        if (total == 0) return false
-        val ratio = yellowCount.toFloat() / total.toFloat()
-        return ratio > 0.025f
     }
 
     private fun checkMiniMapPinInBitmap(bitmap: Bitmap): Boolean {

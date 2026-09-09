@@ -16,9 +16,8 @@ class PointTargetOverlay(
     private val context: Context,
     private val windowManager: WindowManager,
     val point: ClickPoint,
-    var colorHex: String = "#1976D2",
-    private val onPositionUpdated: (ClickPoint) -> Unit,
-    private val onPointClicked: (ClickPoint) -> Unit
+    var colorHex: String = "#FF9800",
+    private val onPositionUpdated: (ClickPoint) -> Unit
 ) {
     private var targetView: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
@@ -26,7 +25,7 @@ class PointTargetOverlay(
     fun show() {
         if (targetView != null) return
 
-        val size = 32 // dp (1/3 크기 유지)
+        val size = 36 // dp
         val density = context.resources.displayMetrics.density
         val pxSize = (size * density).toInt()
 
@@ -48,7 +47,9 @@ class PointTargetOverlay(
             pxSize,
             pxSize,
             paramsType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -56,10 +57,10 @@ class PointTargetOverlay(
             y = py
         }
 
+
         val textView = TextView(context).apply {
-            text = "${point.id}"
-            textSize = 13f
-            setTextColor(Color.WHITE)
+            text = "🎯"
+            textSize = 18f
             gravity = Gravity.CENTER
             val drawable = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -95,26 +96,29 @@ class PointTargetOverlay(
                     layoutParams?.y = initialY + dy
                     windowManager.updateViewLayout(textView, layoutParams)
 
+                    point.rawX = event.rawX
+                    point.rawY = event.rawY
+
                     val curScreenW = context.resources.displayMetrics.widthPixels
                     val curScreenH = context.resources.displayMetrics.heightPixels
-                    val centerX = (layoutParams?.x ?: 0) + pxSize / 2
-                    val centerY = (layoutParams?.y ?: 0) + pxSize / 2
-
-                    point.xRatio = (centerX.toFloat() / curScreenW).coerceIn(0f, 1f)
-                    point.yRatio = (centerY.toFloat() / curScreenH).coerceIn(0f, 1f)
+                    point.xRatio = (event.rawX / curScreenW).coerceIn(0f, 1f)
+                    point.yRatio = (event.rawY / curScreenH).coerceIn(0f, 1f)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!isDragging) {
-                        onPointClicked(point)
-                    } else {
-                        onPositionUpdated(point)
-                    }
+                    point.rawX = (layoutParams?.x ?: 0) + pxSize / 2f
+                    point.rawY = (layoutParams?.y ?: 0) + pxSize / 2f
+                    val curScreenW = context.resources.displayMetrics.widthPixels
+                    val curScreenH = context.resources.displayMetrics.heightPixels
+                    point.xRatio = (point.rawX / curScreenW).coerceIn(0f, 1f)
+                    point.yRatio = (point.rawY / curScreenH).coerceIn(0f, 1f)
+                    onPositionUpdated(point)
                     true
                 }
                 else -> false
             }
         }
+
 
         targetView = textView
         windowManager.addView(targetView, layoutParams)
@@ -122,7 +126,7 @@ class PointTargetOverlay(
 
     fun updateScreenOrientation() {
         if (targetView == null || layoutParams == null) return
-        val size = 32
+        val size = 36
         val density = context.resources.displayMetrics.density
         val pxSize = (size * density).toInt()
 
@@ -134,8 +138,16 @@ class PointTargetOverlay(
         windowManager.updateViewLayout(targetView, layoutParams)
     }
 
-    fun updateLabel() {
-        (targetView as? TextView)?.text = "${point.id}"
+    fun updateColor(newColorHex: String) {
+        colorHex = newColorHex
+        (targetView as? TextView)?.let { tv ->
+            val drawable = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor(newColorHex))
+                setStroke(2, Color.WHITE)
+            }
+            tv.background = drawable
+        }
     }
 
     fun remove() {
@@ -148,3 +160,4 @@ class PointTargetOverlay(
         }
     }
 }
+
