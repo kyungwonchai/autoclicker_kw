@@ -158,25 +158,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
     private var lastEntranceTriggerTime = 0L
     private var lastPotionTime = 0L
-    private var lastBossSkillCycleTime = 0L
-
-    // 보스 방 스킬 위치 목록 (비율 x, y) - 핵심 버프 및 강력한 주력 스킬 우선
-    private val bossSkills = listOf(
-        Pair(0.645f, 0.900f), // [1순위] 번개(안테나) 우측 붉은빛 헬기/버프 로봇
-        Pair(0.710f, 0.900f), // [2순위] 하단 드래그 레이저
-        Pair(0.760f, 0.460f), // [3순위] 4방향 붉은빛 로봇
-        Pair(0.585f, 0.900f), // [4순위] 하단 번개/안테나 로봇
-        Pair(0.585f, 0.770f), // 폭탄 로봇
-        Pair(0.645f, 0.770f), // 개틀링
-        Pair(0.710f, 0.770f), // 발차기
-        Pair(0.690f, 0.460f), // 스위치
-        Pair(0.700f, 0.200f), // 상단1
-        Pair(0.760f, 0.200f), // 상단2
-        Pair(0.815f, 0.200f), // 상단3
-        Pair(0.875f, 0.200f), // 상단4
-        Pair(0.840f, 0.585f)  // 우측발/스킬
-    )
-
     private val isGrowthModeEnabled = AtomicBoolean(false)
     private val isInDungeonState = AtomicBoolean(false)
     private val isHoldingAttack = AtomicBoolean(false)
@@ -254,20 +235,18 @@ class AutoClickAccessibilityService : AccessibilityService() {
             val isPickupHand = if (inDungeon) checkItemPickupInBitmap(bitmap) else false
             // 2. 던전 클리어 메뉴 (보스 클리어 후)
             val isRetryVisible = if (!isPickupHand && !isTown) checkRetryButtonInBitmap(bitmap) else false
-            // 3. 보스방 (던전일 때만)
-            val isBossVisible = if (inDungeon && !isPickupHand && !isRetryVisible) checkBossDevilInBitmap(bitmap) else false
-            // 4. 던전 초입
-            val isEntrance = if (inDungeon && !isPickupHand && !isRetryVisible && !isBossVisible) checkDungeonEntranceInBitmap(bitmap) else false
+            // 3. 던전 초입
+            val isEntrance = if (inDungeon && !isPickupHand && !isRetryVisible) checkDungeonEntranceInBitmap(bitmap) else false
 
             // [캐릭키움 모드 전용 상태 감지]
             // 대화 스킵 (마을/던전 공통)
-            val isSkipDialog = if (isGrowthModeEnabled.get() && !isPickupHand && !isBossVisible) checkSkipDialogInBitmap(bitmap) else false
+            val isSkipDialog = if (isGrowthModeEnabled.get() && !isPickupHand) checkSkipDialogInBitmap(bitmap) else false
             // 완료 확인 팝업
-            val isConfirmPopup = if (isGrowthModeEnabled.get() && !isPickupHand && !isBossVisible && !isSkipDialog) checkConfirmPopupInBitmap(bitmap) else false
+            val isConfirmPopup = if (isGrowthModeEnabled.get() && !isPickupHand && !isSkipDialog) checkConfirmPopupInBitmap(bitmap) else false
             // 퀘스트 선택 / 보고 팝업 ([보고], [수락])
-            val isQuestSelectPopup = if (isGrowthModeEnabled.get() && !isPickupHand && !isBossVisible && !isSkipDialog && !isConfirmPopup) checkQuestSelectPopupInBitmap(bitmap) else false
-            // 던전 입장 전투시작 버튼
-            val isBattleStart = if (isGrowthModeEnabled.get() && !isPickupHand && !isBossVisible && !isSkipDialog && !isConfirmPopup && !isQuestSelectPopup) checkBattleStartInBitmap(bitmap) else false
+            val isQuestSelectPopup = if (isGrowthModeEnabled.get() && !isPickupHand && !isSkipDialog && !isConfirmPopup) checkQuestSelectPopupInBitmap(bitmap) else false
+            // 던전 입장 / 전투시작 버튼 ([입장])
+            val isBattleStart = if (isGrowthModeEnabled.get() && !isPickupHand && !isSkipDialog && !isConfirmPopup && !isQuestSelectPopup) checkBattleStartInBitmap(bitmap) else false
             // 마을 퀘스트 1순위: 마을 상태(isTown)이고 대화/확인/퀘스트팝업/전투시작 팝업이 없고, '이동 중'이 아닐 때만 터치!
             val isQuestAvailable = if (isGrowthModeEnabled.get() && isTown && !isMovingInTown && !isSkipDialog && !isConfirmPopup && !isQuestSelectPopup && !isBattleStart) checkQuestAuraInBitmap(bitmap) else false
             
@@ -325,12 +304,12 @@ class AutoClickAccessibilityService : AccessibilityService() {
             } else if (isBattleStart) {
                 bitmap.recycle()
                 val now = System.currentTimeMillis()
-                if (now - lastGrowthActionTime > 1500L) {
+                if (now - lastGrowthActionTime > 1200L) {
                     lastGrowthActionTime = now
-                    Log.d(TAG, "🌱 [캐릭키움] 전투시작 버튼 감지! 던전 입장 클릭")
-                    val batX = screenW * 0.780f
-                    val batY = screenH * 0.860f
-                    tapSingle(batX, batY, 50L)
+                    Log.d(TAG, "🌱 [캐릭키움] 던전 [입장/전투시작] 버튼 감지! 클릭")
+                    val batX = screenW * 0.790f
+                    val batY = screenH * 0.912f
+                    tapSingle(batX, batY, 60L)
                 }
             } else if (isQuestAvailable) {
                 bitmap.recycle()
@@ -354,34 +333,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
                     val nextQuestX = screenW * 0.850f
                     val nextQuestY = screenH * 0.140f
                     tapSingle(nextQuestX, nextQuestY, 50L)
-                }
-            } else if (isBossVisible) {
-                val now = System.currentTimeMillis()
-                // 보스방에서는 5초마다 상위 2개 스킬만 신속히 시전하고, 그 외 시간은 공격(🎯) 꾹 누르기를 100% 지속해 전진/공격 보장!
-                if (now - lastBossSkillCycleTime > 5000L) {
-                    val readySkills = findReadySkills(bitmap, screenW, screenH)
-                    bitmap.recycle()
-
-                    if (readySkills.isNotEmpty()) {
-                        lastBossSkillCycleTime = now
-                        val skillsToCast = readySkills.take(2) // 상위 핵심 스킬 2개만 시전
-                        Log.d(TAG, "👹 [보스 악마 감지] 핵심 스킬(${skillsToCast.size}개) 신속 시전 후 공격 꾹 누르기 복귀")
-                        isDispatching.set(true)
-                        try {
-                            for ((sx, sy) in skillsToCast) {
-                                if (!isRunning.get()) break
-                                val tapPath = Path().apply { moveTo(sx, sy) }
-                                val tapStroke = GestureDescription.StrokeDescription(tapPath, 0L, 40L)
-                                val tapGesture = GestureDescription.Builder().addStroke(tapStroke).build()
-                                dispatchGestureSuspendResult(tapGesture)
-                                delay(80L)
-                            }
-                        } finally {
-                            isDispatching.set(false)
-                        }
-                    }
-                } else {
-                    bitmap.recycle()
                 }
             } else if (isEntrance) {
                 bitmap.recycle()
@@ -510,71 +461,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
         val ratio = redPixels.toFloat() / totalSampled.toFloat()
         // 미니맵 우측 보스 악마 아이콘 비율 1% 이상이면 감지
         return ratio > 0.010f
-    }
-
-    private fun findReadySkills(bitmap: Bitmap, screenW: Int, screenH: Int): List<Pair<Float, Float>> {
-        val w = bitmap.width
-        val h = bitmap.height
-        // (점수, X좌표, Y좌표)
-        val scoredList = mutableListOf<Triple<Float, Float, Float>>()
-
-        for ((rx, ry) in bossSkills) {
-            val cx = (w * rx).toInt()
-            val cy = (h * ry).toInt()
-
-            var redCount = 0
-            var yellowCount = 0
-            var darkCount = 0
-            var sampleCount = 0
-
-            // 스킬 중앙 영역 샘플링
-            val rad = (w * 0.02f).toInt()
-            val startX = (cx - rad).coerceIn(0, w - 1)
-            val endX = (cx + rad).coerceIn(0, w)
-            val startY = (cy - rad).coerceIn(0, h - 1)
-            val endY = (cy + rad).coerceIn(0, h)
-
-            for (y in startY until endY step 2) {
-                for (x in startX until endX step 2) {
-                    sampleCount++
-                    val pixel = bitmap.getPixel(x, y)
-                    val r = Color.red(pixel)
-                    val g = Color.green(pixel)
-                    val b = Color.blue(pixel)
-
-                    // 1. 붉은기 / 주황색 픽셀 (버프 / 핵심 스킬)
-                    if (r > 180 && g < 140 && b < 80) {
-                        redCount++
-                    }
-                    // 2. 사용 가능한 밝은 노란색 스킬 그래픽
-                    if (r > 180 && g > 160 && b < 90 && (r - b) > 70) {
-                        yellowCount++
-                    }
-                    // 3. 쿨타임 숫자 / 어두운 딤드
-                    if (r < 80 && g < 80 && b < 80) {
-                        darkCount++
-                    }
-                }
-            }
-
-            if (sampleCount > 0) {
-                val redRatio = redCount.toFloat() / sampleCount.toFloat()
-                val yellowRatio = yellowCount.toFloat() / sampleCount.toFloat()
-                val darkRatio = darkCount.toFloat() / sampleCount.toFloat()
-
-                // 쿨타임 숫자나 어두운 상태가 아니고, 활성 그래픽이 충분한 경우만 준비 완료
-                val isReady = (redRatio + yellowRatio) > 0.08f && darkRatio < 0.60f
-                if (isReady) {
-                    // 붉은기가 셀수록 높은 우선순위 점수 부여 (가장 먼저 시전)
-                    val score = (redRatio * 3.0f) + yellowRatio
-                    scoredList.add(Triple(score, screenW * rx, screenH * ry))
-                }
-            }
-        }
-
-        // 붉은기가 센 스킬 우선 정렬하여 반환
-        scoredList.sortByDescending { it.first }
-        return scoredList.map { Pair(it.second, it.third) }
     }
 
     private fun checkDungeonEntranceInBitmap(bitmap: Bitmap): Boolean {
@@ -953,14 +839,14 @@ class AutoClickAccessibilityService : AccessibilityService() {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 우하단 던전 선택창의 [전투시작] 버튼 (x: 70% ~ 85%, y: 82% ~ 90%)
-        val startX = (w * 0.70f).toInt().coerceIn(0, w - 1)
-        val endX = (w * 0.85f).toInt().coerceIn(0, w)
-        val startY = (h * 0.82f).toInt().coerceIn(0, h - 1)
-        val endY = (h * 0.90f).toInt().coerceIn(0, h)
+        // 우하단 던전 선택창의 [입장] / [전투시작] 황금색 버튼 영역 (x: 72% ~ 86%, y: 85% ~ 96%)
+        val startX = (w * 0.72f).toInt().coerceIn(0, w - 1)
+        val endX = (w * 0.86f).toInt().coerceIn(0, w)
+        val startY = (h * 0.85f).toInt().coerceIn(0, h - 1)
+        val endY = (h * 0.96f).toInt().coerceIn(0, h)
 
         var total = 0
-        var orangePixels = 0
+        var goldPixels = 0
 
         for (y in startY until endY step 2) {
             for (x in startX until endX step 2) {
@@ -969,15 +855,16 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 val r = Color.red(p)
                 val g = Color.green(p)
                 val b = Color.blue(p)
-                if (r in 170..245 && g in 100..185 && b < 50) {
-                    orangePixels++
+                // [입장] 버튼의 고유 황금/주황색 (R: 150~255, G: 90~195, B < 70)
+                if (r in 150..255 && g in 90..195 && b < 70) {
+                    goldPixels++
                 }
             }
         }
 
         if (total == 0) return false
-        val ratio = orangePixels.toFloat() / total.toFloat()
-        return ratio > 0.18f
+        val ratio = goldPixels.toFloat() / total.toFloat()
+        return ratio > 0.08f
     }
 
     private fun checkQuestAuraInBitmap(bitmap: Bitmap): Boolean {
