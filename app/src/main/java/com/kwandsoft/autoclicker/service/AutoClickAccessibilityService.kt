@@ -133,6 +133,15 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
                     if (!isActive || !isRunning.get()) break
 
+                    // 던전 전투 상황(일반방/보스방)일 때: 
+                    // 공격 홀드가 온전히 끝났으므로 순환 목록에서 스킬 1개를 탕! 시전하고 다음 홀드로 복귀
+                    if (isGrowthModeEnabled.get() && isInDungeonState.get()) {
+                        val (sx, sy) = combatSkills[nextSkillIndex % combatSkills.size]
+                        nextSkillIndex = (nextSkillIndex + 1) % combatSkills.size
+                        tapSingle(screenW * sx, screenH * sy, 40L)
+                        delay(60L)
+                    }
+
                     if (delayAfterMs > 0) {
                         delay(delayAfterMs)
                     } else {
@@ -155,6 +164,22 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
 
 
+
+    // 던전 전투 시 순환 시전할 주요 스킬 위치 목록 (비율 x, y)
+    private val combatSkills = listOf(
+        Pair(0.705f, 0.895f), // 최하단 우 (주력기)
+        Pair(0.645f, 0.895f), // 최하단 중
+        Pair(0.585f, 0.745f), // 하단 좌
+        Pair(0.645f, 0.745f), // 하단 중
+        Pair(0.705f, 0.745f), // 하단 우
+        Pair(0.690f, 0.590f), // 중단 좌
+        Pair(0.755f, 0.590f), // 중단 우
+        Pair(0.695f, 0.440f), // 상단 좌
+        Pair(0.750f, 0.440f), // 상단 중
+        Pair(0.805f, 0.440f), // 상단 우
+        Pair(0.865f, 0.440f)  // 각성기
+    )
+    private var nextSkillIndex = 0
 
     private var lastEntranceTriggerTime = 0L
     private var lastPotionTime = 0L
@@ -426,14 +451,11 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun checkBossDevilInBitmap(bitmap: Bitmap): Boolean {
-        // 던전 내부(미니맵 파란 핀)가 아니면 마을의 [레이드] 빨간 글씨 등으로 인한 보스 오탐 100% 방지!
-        if (!checkMiniMapPinInBitmap(bitmap)) return false
-
         val w = bitmap.width
         val h = bitmap.height
 
-        // 미니맵 보스방 악마 아이콘 영역 (x: 90% ~ 95%, y: 8% ~ 16%)
-        val startX = (w * 0.900f).toInt().coerceIn(0, w - 1)
+        // 미니맵 보스방 악마 아이콘 영역 (x: 88% ~ 95%, y: 8% ~ 16%)
+        val startX = (w * 0.880f).toInt().coerceIn(0, w - 1)
         val endX = (w * 0.950f).toInt().coerceIn(0, w)
         val startY = (h * 0.080f).toInt().coerceIn(0, h - 1)
         val endY = (h * 0.160f).toInt().coerceIn(0, h)
@@ -449,8 +471,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 val g = Color.green(pixel)
                 val b = Color.blue(pixel)
 
-                // 악마 붉은색 검출 (R > 175, G < 65, B < 65)
-                if (r > 175 && g < 65 && b < 65) {
+                // 악마 붉은색 검출 (R > 160, G < 65, B < 65)
+                if (r > 160 && g < 65 && b < 65) {
                     redPixels++
                 }
             }
@@ -458,7 +480,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
         if (totalSampled == 0) return false
         val ratio = redPixels.toFloat() / totalSampled.toFloat()
-        // 미니맵 우측 보스 악마 아이콘 비율 1% 이상이면 감지
+        // 미니맵 우측 보스 악마 아이콘 비율 1% 이상이면 보스방 감지!
         return ratio > 0.010f
     }
 
