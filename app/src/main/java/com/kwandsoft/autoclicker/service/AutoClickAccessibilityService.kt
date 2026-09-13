@@ -321,11 +321,20 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 isSkip -> {
                     diagCode = 140
                     diagnosisResult = "💬 [스토리 대화] 건너뛰기(✕) 감지"
-                    targetAction = "우상단 [건너뛰기 ✕](91.5%, 6.0%) 클릭 예정"
+                    targetAction = "우상단 [건너뛰기 ✕](91.5%, 6.0%) 1초 5회 초고속 연타 예정"
                     cropX = (screenW * 0.84f).toInt().coerceIn(0, bitmap.width - 1)
                     cropY = (screenH * 0.02f).toInt().coerceIn(0, bitmap.height - 1)
                     cropW = (screenW * 0.15f).toInt().coerceAtMost(bitmap.width - cropX)
                     cropH = (screenH * 0.10f).toInt().coerceAtMost(bitmap.height - cropY)
+                }
+                hasMiniMap || (isInDungeonState.get() && hasCombat) -> {
+                    diagCode = 121
+                    diagnosisResult = "⚔️ [던전 전투] 우상단 미니맵(약간 시커먼 네모) 및 조작키 확인"
+                    targetAction = "공격 버튼(84.2%, 82.5%) 5초 꾹 누르기(Hold) 진행 예정"
+                    cropX = (screenW * 0.86f).toInt().coerceIn(0, bitmap.width - 1)
+                    cropY = (screenH * 0.035f).toInt().coerceIn(0, bitmap.height - 1)
+                    cropW = (screenW * 0.12f).toInt().coerceAtMost(bitmap.width - cropX)
+                    cropH = (screenH * 0.22f).toInt().coerceAtMost(bitmap.height - cropY)
                 }
                 isClear -> {
                     diagCode = 130
@@ -344,15 +353,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
                     cropY = (screenH * 0.75f).toInt().coerceIn(0, bitmap.height - 1)
                     cropW = (screenW * 0.22f).toInt().coerceAtMost(bitmap.width - cropX)
                     cropH = (screenH * 0.22f).toInt().coerceAtMost(bitmap.height - cropY)
-                }
-                hasMiniMap || (isInDungeonState.get() && hasCombat) -> {
-                    diagCode = 121
-                    diagnosisResult = "⚔️ [던전 전투] 우상단 미니맵 및 전투 컨트롤 확인"
-                    targetAction = "공격 버튼(84.2%, 82.5%) 5초 꾹 누르기(Hold) 진행 예정"
-                    cropX = (screenW * 0.84f).toInt().coerceIn(0, bitmap.width - 1)
-                    cropY = (screenH * 0.03f).toInt().coerceIn(0, bitmap.height - 1)
-                    cropW = (screenW * 0.14f).toInt().coerceAtMost(bitmap.width - cropX)
-                    cropH = (screenH * 0.18f).toInt().coerceAtMost(bitmap.height - cropY)
                 }
                 isBlack -> {
                     diagCode = 100
@@ -522,18 +522,60 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 bitmap.recycle()
                 growthState = GrowthState.DIALOG_PROGRESS
                 lastDialogActionTime = now
-                StatusHudOverlay.updateStatus(140, "대화 스킵: 스토리 대화창 감지 -> 건너뛰기(✕) 터치")
+                StatusHudOverlay.updateStatus(140, "대화 스킵: 스토리 대화창 감지 -> 건너뛰기(✕) 1초 5회 초고속 연타")
                 if (now - lastGrowthActionTime > 120L) {
                     lastGrowthActionTime = now
-                    Log.d(TAG, "🌱 [3순위: 대화 스킵] 건너뛰기 ✕ 클릭")
+                    Log.d(TAG, "🌱 [3순위: 대화 스킵] 건너뛰기 ✕ 1초 5회 초고속 연타 실행")
                     val skipX = screenW * 0.915f
                     val skipY = screenH * 0.060f
-                    tapSingle(skipX, skipY, 40L)
+                    tapRapid(skipX, skipY, count = 5, intervalMs = 60L)
                 }
                 return
             }
 
-            // 4순위: 던전 클리어 메뉴 (보스 처치 후 결과 화면: [마을로 가기], [다시하기], [에픽 퀘스트])
+            // 4순위: [던전 내부 실제 전투 중] 우상단 미니맵(약간 시커먼 네모) + 전투 조작계 동시 감지 (최우선 전투!)
+            val hasMiniMap = checkDungeonMiniMapInBitmap(bitmap)
+            val hasCombatControls = checkCombatControlsInBitmap(bitmap)
+
+            if (hasMiniMap || (isInDungeonState.get() && hasCombatControls)) {
+                isInDungeonState.set(true)
+                growthState = GrowthState.DUNGEON_COMBAT
+
+                val cropX = (screenW * 0.86f).toInt().coerceIn(0, bitmap.width - 1)
+                val cropY = (screenH * 0.035f).toInt().coerceIn(0, bitmap.height - 1)
+                val cropW = (screenW * 0.12f).toInt().coerceAtMost(bitmap.width - cropX)
+                val cropH = (screenH * 0.22f).toInt().coerceAtMost(bitmap.height - cropY)
+                val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 121, "⚔️ [던전 전투] 우상단 미니맵(약간 시커먼 네모) 감지", "공격 꾹 누르기 / 전투 진행", evidence)
+                DebugVisionOverlay.updateVision("⚔️ [4순위] 던전 전투 미니맵", evidence, "미니맵 어두운 박스")
+
+                val isPickupHand = checkItemPickupInBitmap(bitmap)
+                if (isPickupHand) {
+                    StatusHudOverlay.updateStatus(122, "던전 전투: 바닥 아이템 줍기 감지 -> 줍기 터치")
+                    bitmap.recycle()
+                    Log.d(TAG, "🖐️ [아이템 줍기] 손모양 감지됨! 줍기 탭")
+                    val pickupX = screenW * 0.825f
+                    val pickupY = screenH * 0.825f
+                    tapSingle(pickupX, pickupY, 40L)
+                    return
+                }
+
+                StatusHudOverlay.updateStatus(121, "던전 전투: 미니맵 확인됨 -> 공격 홀드 진행 중")
+                bitmap.recycle()
+                return // 미니맵이 떠있는 전투 중에는 던전 클리어/마을 퀘스트 등 헛클릭 100% 원천 차단!
+            }
+
+            // ⚠️ 던전 래치 보호: 이미 던전 진입 상태였는데, 마을 레이더도 없다면 전투 유지
+            val isTown = checkTownScreenInBitmap(bitmap)
+            if (isInDungeonState.get() && !isTown) {
+                growthState = GrowthState.DUNGEON_COMBAT
+                StatusHudOverlay.updateStatus(124, "던전 전투 래치: 미니맵 일시 미검출 -> 전투 유지 (헛클릭 차단)")
+                DebugVisionOverlay.updateVision("🛡️ [래치] 던전 전투 유지", null, "이펙트/방이동 대기")
+                bitmap.recycle()
+                return // 던전 전투 상태를 유지하며 우상단 헛클릭 원천 차단!
+            }
+
+            // 5순위: 던전 클리어 메뉴 (보스 처치 후 결과 화면: [마을로 가기], [다시하기], [에픽 퀘스트])
             val isDungeonClear = checkRetryButtonInBitmap(bitmap)
             if (isDungeonClear) {
                 val cropX = (screenW * 0.75f).toInt().coerceIn(0, bitmap.width - 1)
@@ -615,52 +657,9 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 }
 
                 StatusHudOverlay.updateStatus(112, "던전 선택 화면 대기 중 (헛클릭 원천 차단)")
-                DebugVisionOverlay.updateVision("⏳ [5순위] 던전 선택 대기", null, "카드/버튼 대기")
+                DebugVisionOverlay.updateVision("⏳ [6순위] 던전 선택 대기", null, "카드/버튼 대기")
                 bitmap.recycle()
                 return // 던전 선택 화면에서는 마을 퀘스트 헛클릭 일체 차단!
-            }
-
-            // 6순위: [던전 내부 실제 전투 중] 우상단 미니맵 + 전투 조작계 동시 감지 (마을 퀘스트보다 최우선!)
-            val hasMiniMap = checkDungeonMiniMapInBitmap(bitmap)
-            val hasCombatControls = checkCombatControlsInBitmap(bitmap)
-
-            if (hasMiniMap || (isInDungeonState.get() && hasCombatControls)) {
-                isInDungeonState.set(true)
-                growthState = GrowthState.DUNGEON_COMBAT
-
-                val cropX = (screenW * 0.84f).toInt().coerceIn(0, bitmap.width - 1)
-                val cropY = (screenH * 0.03f).toInt().coerceIn(0, bitmap.height - 1)
-                val cropW = (screenW * 0.14f).toInt().coerceAtMost(bitmap.width - cropX)
-                val cropH = (screenH * 0.20f).toInt().coerceAtMost(bitmap.height - cropY)
-                val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
-                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 121, "⚔️ [던전 전투] 우상단 미니맵 및 전투 조작계 감지", "공격 꾹 누르기 / 전투 진행", evidence)
-                DebugVisionOverlay.updateVision("⚔️ [6순위] 던전 전투 미니맵", evidence, "미니맵 어두운 박스")
-
-                val isPickupHand = checkItemPickupInBitmap(bitmap)
-                if (isPickupHand) {
-                    StatusHudOverlay.updateStatus(122, "던전 전투: 바닥 아이템 줍기 감지 -> 줍기 터치")
-                    bitmap.recycle()
-                    Log.d(TAG, "🖐️ [아이템 줍기] 손모양 감지됨! 줍기 탭")
-                    val pickupX = screenW * 0.825f
-                    val pickupY = screenH * 0.825f
-                    tapSingle(pickupX, pickupY, 40L)
-                    return
-                }
-
-                StatusHudOverlay.updateStatus(121, "던전 전투: 미니맵 확인됨 -> 공격 홀드 진행 중")
-                bitmap.recycle()
-                return // 미니맵이 떠있는 전투 중에는 화면 우상단 등 헛클릭 100% 원천 차단!
-            }
-
-            // ⚠️ 던전 래치 보호: 이미 던전 진입 상태였는데, 클리어도 아니고 던전선택도 아니며 마을 레이더도 없다면?
-            // (던전 내 방 이동/이펙트 플래시/보스 연출 등으로 일시적으로 미니맵이 흐려진 상황)
-            val isTown = checkTownScreenInBitmap(bitmap)
-            if (isInDungeonState.get() && !isTown) {
-                growthState = GrowthState.DUNGEON_COMBAT
-                StatusHudOverlay.updateStatus(124, "던전 전투 래치: 미니맵 일시 미검출 -> 전투 유지 (헛클릭 차단)")
-                DebugVisionOverlay.updateVision("🛡️ [래치] 던전 전투 유지", null, "이펙트/방이동 대기")
-                bitmap.recycle()
-                return // 던전 전투 상태를 유지하며 우상단 헛클릭 원천 차단!
             }
 
             // 7순위: [검은 화면 무시]: 던전 방 이동/로딩 암전 (대화창/퀘스트가 아닌 순수한 방 이동 화면)
@@ -1166,6 +1165,15 @@ class AutoClickAccessibilityService : AccessibilityService() {
         tapSingle(x, y, 50L)
     }
 
+    private suspend fun tapRapid(x: Float, y: Float, count: Int = 5, intervalMs: Long = 60L) {
+        repeat(count) { idx ->
+            tapSingle(x, y, 40L)
+            if (idx < count - 1) {
+                delay(intervalMs)
+            }
+        }
+    }
+
     private suspend fun holdSingle(x: Float, y: Float, durationMs: Long = 5000L) {
         isDispatching.set(true)
         try {
@@ -1639,16 +1647,16 @@ class AutoClickAccessibilityService : AccessibilityService() {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 우상단 사각형 던전 미니맵 영역 (x: 86% ~ 97%, y: 4% ~ 20%)
+        // 우상단 사각형 던전 미니맵 영역 (x: 86% ~ 97%, y: 3.5% ~ 25%) - 약간 시커먼 네모
         val startX = (w * 0.86f).toInt().coerceIn(0, w - 1)
         val endX = (w * 0.97f).toInt().coerceIn(0, w)
-        val startY = (h * 0.04f).toInt().coerceIn(0, h - 1)
-        val endY = (h * 0.20f).toInt().coerceIn(0, h)
+        val startY = (h * 0.035f).toInt().coerceIn(0, h - 1)
+        val endY = (h * 0.25f).toInt().coerceIn(0, h)
 
+        var darkPts = 0
         var bluePin = 0
         var redArrow = 0
-        var roomTiles = 0
-        var darkPts = 0
+        var yellowName = 0
         var total = 0
 
         for (y in startY until endY step 2) {
@@ -1659,21 +1667,21 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 val g = Color.green(p)
                 val b = Color.blue(p)
 
-                // 1) 미니맵 반투명 어두운 배경 (R,G,B < 40)
-                if (r < 40 && g < 40 && b < 40) {
+                // 1) 미니맵의 '약간 시커먼 네모' 반투명 어두운 배경 (R,G,B < 45)
+                if (r < 45 && g < 45 && b < 45) {
                     darkPts++
                 }
                 // 2) 플레이어 위치 콘 마커 (파란색)
-                if (b > 140 && r < 80 && g < 120 && (b - r) > 50) {
+                if (b > 140 && r < 80 && g < 120 && (b - r) > 40) {
                     bluePin++
                 }
-                // 3) 플레이어 방향 화살표 (빨간색 팁)
+                // 3) 플레이어 방향 화살표 (빨간색/주황색 화살표)
                 if (r > 180 && g < 70 && b < 50) {
                     redArrow++
                 }
-                // 4) 던전 방(Room) 사각 격자 타일 (황토/갈색 타일)
-                if (r in 50..110 && g in 40..90 && b in 15..60 && r > b) {
-                    roomTiles++
+                // 4) 미니맵 하단 던전명 황금 텍스트 (달빛주점, 제2척추 등)
+                if (r > 180 && g > 130 && b < 70 && (r - b) > 80) {
+                    yellowName++
                 }
             }
         }
@@ -1681,34 +1689,30 @@ class AutoClickAccessibilityService : AccessibilityService() {
         if (total == 0) return false
         val darkRatio = darkPts.toFloat() / total.toFloat()
 
-        // 미니맵 바로 아래의 던전 이름 황금 텍스트 (x: 85% ~ 98%, y: 20% ~ 25%)
-        val nameStartX = (w * 0.85f).toInt().coerceIn(0, w - 1)
-        val nameEndX = (w * 0.98f).toInt().coerceIn(0, w)
-        val nameStartY = (h * 0.20f).toInt().coerceIn(0, h - 1)
-        val nameEndY = (h * 0.25f).toInt().coerceIn(0, h)
-        var yellowName = 0
-        for (y in nameStartY until nameEndY step 2) {
-            for (x in nameStartX until nameEndX step 2) {
+        // 마을의 목재 현판(wood) 비율 확인 (x: 88% ~ 96%, y: 3% ~ 9%)
+        val wStartX = (w * 0.88f).toInt().coerceIn(0, w - 1)
+        val wEndX = (w * 0.96f).toInt().coerceIn(0, w)
+        val wStartY = (h * 0.03f).toInt().coerceIn(0, h - 1)
+        val wEndY = (h * 0.09f).toInt().coerceIn(0, h)
+        var woodPts = 0
+        for (y in wStartY until wEndY step 2) {
+            for (x in wStartX until wEndX step 2) {
                 val p = bitmap.getPixel(x, y)
                 val r = Color.red(p)
                 val g = Color.green(p)
                 val b = Color.blue(p)
-                if (r > 180 && g > 130 && b < 70 && (r - b) > 90) {
-                    yellowName++
+                if (r > 65 && g > 40 && r > b) {
+                    woodPts++
                 }
             }
         }
 
-        // 플레이어 핀(파란 마커 or 빨간 화살표) 존재 여부
-        val hasPlayerMarker = (bluePin >= 30 || (bluePin >= 15 && redArrow >= 20))
-        // 방 격자 구조 + 어두운 박스 비율
-        val hasRoomStructure = (roomTiles >= 2000 && darkRatio >= 0.25f)
-        // 던전 이름 텍스트 존재 여부
-        val hasDungeonName = (yellowName >= 100)
+        // 던전 미니맵은 '약간 시커먼 네모'가 최소 30% 이상이어야 하고, 마을 목재 현판(woodPts > 1800)이 없어야 함
+        if (darkRatio < 0.30f || woodPts > 1800) return false
 
-        // 사각형 미니맵 형태 판정: (플레이어 마커 OR 방 격자 구조) && (던전명 OR 미니맵 다크박스 30% 이상)
-        val isSquareMinimap = (hasPlayerMarker || hasRoomStructure) && (hasDungeonName || darkRatio >= 0.30f)
-        if (!isSquareMinimap) return false
+        // 플레이어 핀(파란 마커/빨간 화살표) 또는 던전명(달빛주점/제2척추 등) 존재 필수!
+        val hasMinimapMarkerOrName = (bluePin >= 25 || redArrow >= 25 || yellowName >= 80)
+        if (!hasMinimapMarkerOrName) return false
 
         // 전투 컨트롤(공격 버튼 or 조이스틱)이 실제로 존재해야 진짜 던전 전투 미니맵으로 인정!
         return checkCombatControlsInBitmap(bitmap)
