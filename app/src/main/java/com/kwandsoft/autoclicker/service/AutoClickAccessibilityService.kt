@@ -283,32 +283,29 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // 1순위: [던전 전투 중] 화면에 공격 버튼(황금검) 또는 조이스틱 감지 시 100% 전투 중!
-            // 대화 스킵/팝업/마을 퀘스트 등 화면 상단 터치(미니맵 오클릭 등)를 일체 금지하고 공격 홀드 100% 보장!
-            val isCombat = checkCombatControlsInBitmap(bitmap)
-            if (isCombat) {
-                isInDungeonState.set(true)
-                growthState = GrowthState.DUNGEON_COMBAT
-
-                val isPickupHand = checkItemPickupInBitmap(bitmap)
-                if (isPickupHand) {
-                    bitmap.recycle()
-                    Log.d(TAG, "🖐️ [아이템 줍기] 손모양 감지됨! 줍기 탭")
-                    val pickupX = screenW * 0.825f
-                    val pickupY = screenH * 0.825f
-                    tapSingle(pickupX, pickupY, 40L)
-                    return
-                }
+            // 1순위: 던전 클리어 메뉴 (보스 처치 후 우측 세로 패널: 마을로 가기, 다음 퀘스트 등)
+            // 전투가 끝났으므로 공격 홀드를 즉각 중단하고 최우선으로 다음 에픽 퀘스트 클릭!
+            val isDungeonClear = checkRetryButtonInBitmap(bitmap)
+            if (isDungeonClear) {
                 bitmap.recycle()
-                return // 전투 중에는 화면 상단 미니맵 등 헛클릭 원천 차단!
-            }
+                growthState = GrowthState.DUNGEON_CLEAR
+                isInDungeonState.set(false) // 전투 즉시 중단 및 홀드 차단
+                hasDoneDungeonInitialClicks.set(false)
 
-            // 이하 비전투 화면 (전투 컨트롤 부재)
-            isInDungeonState.set(false)
+                if (now - lastClearQuestClickTime > 400L) {
+                    lastClearQuestClickTime = now
+                    Log.d(TAG, "🌱 [1순위: 던전 클리어] 최상단 다음 에픽 퀘스트(18.3%) 즉시 클릭")
+                    val nextQuestX = screenW * 0.865f
+                    val nextQuestY = screenH * 0.183f
+                    tapSingle(nextQuestX, nextQuestY, 60L)
+                }
+                return
+            }
 
             // 2순위: 던전 선택 화면 (반짝이는 사각형 지도 맵 카드 및 [입장] 버튼)
             val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
             if (isDungeonSelect) {
+                isInDungeonState.set(false)
                 hasDoneDungeonInitialClicks.set(false)
 
                 // 1) 반짝이는 퀘스트 타겟 맵 카드 감지 시 즉시 클릭!
@@ -345,22 +342,28 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 return // 던전 선택 화면에서는 마을 퀘스트 헛클릭 일체 차단!
             }
 
-            // 3순위: 던전 클리어 메뉴 (보스 처치 후 우측 세로 패널: 마을로 가기, 다음 퀘스트 등)
-            val isDungeonClear = checkRetryButtonInBitmap(bitmap)
-            if (isDungeonClear) {
-                bitmap.recycle()
-                growthState = GrowthState.DUNGEON_CLEAR
-                hasDoneDungeonInitialClicks.set(false)
+            // 3순위: [던전 전투 중] 화면에 공격 버튼(황금검) 또는 조이스틱 감지 시 100% 전투 중!
+            // 대화 스킵/팝업/마을 퀘스트 등 화면 상단 터치(미니맵 오클릭 등)를 일체 금지하고 공격 홀드 100% 보장!
+            val isCombat = checkCombatControlsInBitmap(bitmap)
+            if (isCombat) {
+                isInDungeonState.set(true)
+                growthState = GrowthState.DUNGEON_COMBAT
 
-                if (now - lastClearQuestClickTime > 400L) {
-                    lastClearQuestClickTime = now
-                    Log.d(TAG, "🌱 [3순위: 던전 클리어] 최상단 다음 에픽 퀘스트(18.3%) 즉시 클릭")
-                    val nextQuestX = screenW * 0.865f
-                    val nextQuestY = screenH * 0.183f
-                    tapSingle(nextQuestX, nextQuestY, 60L)
+                val isPickupHand = checkItemPickupInBitmap(bitmap)
+                if (isPickupHand) {
+                    bitmap.recycle()
+                    Log.d(TAG, "🖐️ [아이템 줍기] 손모양 감지됨! 줍기 탭")
+                    val pickupX = screenW * 0.825f
+                    val pickupY = screenH * 0.825f
+                    tapSingle(pickupX, pickupY, 40L)
+                    return
                 }
-                return
+                bitmap.recycle()
+                return // 전투 중에는 화면 상단 미니맵 등 헛클릭 원천 차단!
             }
+
+            // 이하 비전투 화면 (전투 컨트롤 부재)
+            isInDungeonState.set(false)
 
             // 4순위: 대화 스킵 (✕) (건너뛰기)
             val isSkipDialog = checkSkipDialogInBitmap(bitmap)
