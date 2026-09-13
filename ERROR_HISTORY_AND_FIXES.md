@@ -421,4 +421,25 @@
      - 던전 미니맵이 존재하면 절대 마을로 판정하지 않음(`if (checkDungeonMiniMapInBitmap(bitmap)) return false`).
      - 마을 고유의 대형 목재 현판(`woodPts > 2200`) 또는 검증된 레이더 구체(`ratio > 0.08 && woodPts > 1500`)가 있을 때만 마을로 확정.
   4. **프레임 단위 상태 자동 동기화(State Auto-Sync)**:
-     - 매 프레임 진입 시 던전 사각 미니맵이 확인되면 즉시 `DUNGEON_COMBAT`으로 상태를 동기화하여 매끄러운 연속 전투 보장.
+ 
+## 29. 던전 [입장/전투시작] 버튼 vs [장착] 팝업(#001) 오인 충돌 해소 및 안티스턱 방어 강화
+* **증상**:
+  1. 던전 선택 화면에서 황금색 [입장 / 전투시작] 버튼(`x: 83.6%, y: 85.2%`)을 우하단 장비 획득 [장착] 팝업(`x: 88.5%, y: 85.0%`, #001)으로 오인하여, 전투 시작을 누르지 못하고 #001 팝업으로 무한 루프 도는 현상 발생.
+  2. [장착] 팝업 감지 시 터치 후에도 동일 좌표가 계속 잡히면 다음 상태(전투시작/맵선택 등)로 빠져나가지 못하고 해당 위치에 갇히는 문제.
+  3. `checkRetryButtonInBitmap`과 `checkDungeonSelectScreenInBitmap` 간 상호 재귀 호출로 인한 `StackOverflowError` 발생.
+* **원인**:
+  1. **입장 버튼 황금 비율 임계값 과다**: `findBattleStartButtonInBitmap`의 황금색 비율 조건이 `ratio > 0.08f` (8%)로 설정되어 있었으나, 3120x1440 해상도에서 실제 [입장] 버튼의 황금 픽셀 비율은 약 5.06%(1,645px / 32,500px)에 불과하여 `checkBattleStartInBitmap`이 `false`를 반환함.
+  2. **장착 팝업 위치 2번의 영역 침범**: `checkBattleStartInBitmap`이 실패하자, `findEquipButtonInBitmap`의 위치 2번(`y: 85%`)이 던전 선택창 우측 하단의 [입장] 버튼 주황 픽셀(413px)을 던전 클리어 장착 팝업으로 오인하여 `#001`로 반환함.
+  3. **상호 재귀(Mutual Recursion)**: `checkRetryButtonInBitmap` 내부에서 `checkDungeonSelectScreenInBitmap`을 호출하고, `checkDungeonSelectScreenInBitmap` 내부에서 `checkRetryButtonInBitmap`을 상호 호출하여 스택 오버플로우 유발.
+* **해결 조치**:
+  1. **[입장/전투시작] 버튼 판별 기준 현실화**:
+     - `findBattleStartButtonInBitmap`의 임계값을 `ratio > 0.03f && goldPixels > 300`으로 조정하여 실기기(3120x1440)의 입장 버튼(`83.6%, 85.2%`)을 100% 정밀 식별하도록 수정.
+  2. **장착 팝업 위치 2번 격리 및 상호 배제(Mutual Exclusion)**:
+     - `findEquipButtonInBitmap`에 `if (checkBattleStartInBitmap(bitmap)) return null` 및 `if (checkDungeonMiniMapInBitmap(bitmap)) return null` 차단 가드 적용.
+     - 위치 2번(`y: 85%`)은 오직 던전 클리어 결과 화면(`checkRetryButtonInBitmap`)에서만 활성화되도록 엄격히 격리.
+  3. **상호 재귀 완전 제거**:
+     - `checkRetryButtonInBitmap`에서 불필요한 `checkDungeonSelectScreenInBitmap` 호출을 제거하여 단독 판별 보장 및 스택 오버플로우 원천 차단.
+  4. **#001 장착 팝업 안티스턱(Anti-Stuck) 폴백 도입**:
+     - `consecutiveEquipClicks` 카운터를 도입하여, [장착] 버튼이 2회 연속 터치된 후에도 동일 판정이 지속될 경우 즉시 해당 인터럽트를 통과시켜 상태 머신(던전 선택 / 전투시작 등)이 지연 없이 바로 실행되도록 방어 로직 구현.
+  5. **진단(D) 툴 안정성 강화**:
+     - `diagnoseCurrentScreenState`에서 `resources.displayMetrics` 대신 캡처된 `bitmap.width`, `bitmap.height`를 직접 참조하고, `try-catch`로 예외를 완벽 보호.

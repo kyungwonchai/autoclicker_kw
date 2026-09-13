@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.kwandsoft.autoclicker.overlay.FloatingOverlayManager
 
@@ -41,13 +42,16 @@ class FloatingControlService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             "ACTION_DIAGNOSE" -> {
+                Log.d("FloatingControlService", "🔍 ACTION_DIAGNOSE received! instance=${AutoClickAccessibilityService.instance}")
                 AutoClickAccessibilityService.instance?.diagnoseCurrentScreenState()
             }
             "ACTION_START_SLOT" -> {
                 val slotIndex = intent.getIntExtra("slot_index", 0)
+                Log.d("FloatingControlService", "▶️ ACTION_START_SLOT received: slot=$slotIndex, overlayManager=$overlayManager")
                 overlayManager?.toggleSlotPlay(slotIndex)
             }
             "ACTION_STOP" -> {
+                Log.d("FloatingControlService", "⏹️ ACTION_STOP received")
                 overlayManager?.stopAll()
             }
         }

@@ -26,7 +26,7 @@ import com.kwandsoft.autoclicker.history.ActionHistoryManager
 
 class AutoClickAccessibilityService : AccessibilityService() {
 
-    private val serviceScope = CoroutineScope(Dispatchers.Default + Job())
+    private var serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var executionJob: Job? = null
     private val isRunning = AtomicBoolean(false)
     private var runningSlotId: Int? = null
@@ -43,6 +43,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         instance = this
         Log.d(TAG, "AccessibilityService connected")
     }
@@ -198,6 +199,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
     private var lastEntranceTriggerTime = 0L
     private var lastPotionTime = 0L
+    private var consecutiveEquipClicks = 0
     private val isGrowthModeEnabled = AtomicBoolean(true)
     private val isInDungeonState = AtomicBoolean(false)
     private val hasDoneDungeonInitialClicks = AtomicBoolean(false)
@@ -247,167 +249,186 @@ class AutoClickAccessibilityService : AccessibilityService() {
     fun isGrowthMode(): Boolean = isGrowthModeEnabled.get()
 
     fun diagnoseCurrentScreenState() {
-        serviceScope.launch {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+        Log.d(TAG, "🔍 [진단 시작] diagnoseCurrentScreenState 호출됨")
+        CoroutineScope(Dispatchers.Default).launch {
+            Log.d(TAG, "🔍 [진단 코루틴 진입]")
+            try {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                    mainHandler.post {
+                        android.widget.Toast.makeText(this@AutoClickAccessibilityService, "Android R 이상 지원", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+
+                val bitmap = captureScreenshotSuspend()
+                if (bitmap == null) {
+                    Log.w(TAG, "❌ [진단 실패] captureScreenshotSuspend returned null")
+                    mainHandler.post {
+                        android.widget.Toast.makeText(this@AutoClickAccessibilityService, "❌ 화면 캡처 실패", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+
+                val screenW = bitmap.width
+                val screenH = bitmap.height
+
+                Log.d(TAG, "🔍 [진단] 1. checkEquipPopupInBitmap 시작 (${screenW}x${screenH})")
+                val isEquip = checkEquipPopupInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 2. checkConfirmPopupInBitmap (isEquip=$isEquip)")
+                val isConfirm = checkConfirmPopupInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 3. checkQuestSelectPopupInBitmap (isConfirm=$isConfirm)")
+                val isQuestSelect = checkQuestSelectPopupInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 4. checkSkipDialogInBitmap (isQuestSelect=$isQuestSelect)")
+                val isSkip = checkSkipDialogInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 5. checkRetryButtonInBitmap (isSkip=$isSkip)")
+                val isClear = checkRetryButtonInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 6. checkDungeonSelectScreenInBitmap (isClear=$isClear)")
+                val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 7. checkEpicBanner / Aura (isDungeonSelect=$isDungeonSelect)")
+                val hasEpicQuest = checkEpicBannerInBitmap(bitmap) || checkQuestAuraInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 8. checkPointingGuide (hasEpicQuest=$hasEpicQuest)")
+                val pointingTip = checkPointingGuideInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 9. isBlackTransitionScreen (pointingTip=$pointingTip)")
+                val isBlack = isBlackTransitionScreen(bitmap)
+                Log.d(TAG, "🔍 [진단] 10. checkDungeonMiniMapInBitmap (isBlack=$isBlack)")
+                val hasMiniMap = checkDungeonMiniMapInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 11. checkCombatControlsInBitmap (hasMiniMap=$hasMiniMap)")
+                val hasCombat = checkCombatControlsInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 12. checkTownScreenInBitmap (hasCombat=$hasCombat)")
+                val isTown = checkTownScreenInBitmap(bitmap)
+                Log.d(TAG, "🔍 [진단] 모든 체크 완료: isTown=$isTown")
+
+                val diagnosisResult: String
+                val targetAction: String
+                val diagCode: Int
+
+                var cropX = (screenW * 0.74f).toInt().coerceIn(0, bitmap.width - 1)
+                var cropY = (screenH * 0.03f).toInt().coerceIn(0, bitmap.height - 1)
+                var cropW = (screenW * 0.24f).toInt().coerceIn(1, bitmap.width - cropX)
+                var cropH = (screenH * 0.30f).toInt().coerceIn(1, bitmap.height - cropY)
+
+                when {
+                    isEquip -> {
+                        diagCode = 1
+                        val equipCoord = findEquipButtonInBitmap(bitmap) ?: Pair(screenW * 0.905f, screenH * 0.680f)
+                        val (eqX, eqY) = equipCoord
+                        diagnosisResult = "🛡️ [장비 획득] [장착] 팝업 감지"
+                        targetAction = "우하단 [장착](%.1f%%, %.1f%%) 클릭 예정".format(eqX / screenW * 100f, eqY / screenH * 100f)
+                        cropX = (eqX - screenW * 0.06f).toInt().coerceIn(0, bitmap.width - 1)
+                        cropY = (eqY - screenH * 0.08f).toInt().coerceIn(0, bitmap.height - 1)
+                        cropW = (screenW * 0.12f).toInt().coerceIn(1, bitmap.width - cropX)
+                        cropH = (screenH * 0.15f).toInt().coerceIn(1, bitmap.height - cropY)
+                    }
+                    isConfirm -> {
+                        diagCode = 150
+                        diagnosisResult = "📋 [확인 팝업] 중앙 확인 모달 감지"
+                        targetAction = "중앙 확인(56.0%, 63.0%) 클릭 예정"
+                        cropX = (screenW * 0.40f).toInt().coerceIn(0, bitmap.width - 1)
+                        cropY = (screenH * 0.38f).toInt().coerceIn(0, bitmap.height - 1)
+                        cropW = (screenW * 0.25f).toInt().coerceIn(1, bitmap.width - cropX)
+                        cropH = (screenH * 0.30f).toInt().coerceIn(1, bitmap.height - cropY)
+                    }
+                    isQuestSelect -> {
+                        diagCode = 160
+                        diagnosisResult = "📜 [NPC 퀘스트] 최상단 에픽 [보고/수락] 감지"
+                        targetAction = "최상단 에픽 보고/수락(65.5%, 35.5%) 클릭 예정"
+                        cropX = (screenW * 0.55f).toInt().coerceIn(0, bitmap.width - 1)
+                        cropY = (screenH * 0.25f).toInt().coerceIn(0, bitmap.height - 1)
+                        cropW = (screenW * 0.25f).toInt().coerceIn(1, bitmap.width - cropX)
+                        cropH = (screenH * 0.25f).toInt().coerceIn(1, bitmap.height - cropY)
+                    }
+                    isSkip -> {
+                        diagCode = 140
+                        diagnosisResult = "💬 [스토리 대화] 건너뛰기(✕) 감지"
+                        targetAction = "우상단 [건너뛰기 ✕](91.5%, 6.0%) 1초 5회 초고속 연타 예정"
+                        cropX = (screenW * 0.84f).toInt().coerceIn(0, bitmap.width - 1)
+                        cropY = (screenH * 0.02f).toInt().coerceIn(0, bitmap.height - 1)
+                        cropW = (screenW * 0.15f).toInt().coerceIn(1, bitmap.width - cropX)
+                        cropH = (screenH * 0.10f).toInt().coerceIn(1, bitmap.height - cropY)
+                    }
+                    hasMiniMap -> {
+                        diagCode = 121
+                        diagnosisResult = "⚔️ [상태패턴: DUNGEON_COMBAT] 미니맵 확인됨"
+                        targetAction = "공격 버튼(84.2%, 82.5%) 홀드 전투 수행"
+                        cropX = (screenW * 0.86f).toInt().coerceIn(0, bitmap.width - 1)
+                        cropY = (screenH * 0.035f).toInt().coerceIn(0, bitmap.height - 1)
+                        cropW = (screenW * 0.12f).toInt().coerceIn(1, bitmap.width - cropX)
+                        cropH = (screenH * 0.22f).toInt().coerceIn(1, bitmap.height - cropY)
+                    }
+                    isClear -> {
+                        diagCode = 130
+                        diagnosisResult = "🏆 [상태패턴: DUNGEON_CLEAR] 결과창 감지"
+                        targetAction = "우상단 다음 에픽 퀘스트(16.0%) 클릭 및 마을 복귀 대기"
+                        cropX = (screenW * 0.75f).toInt().coerceIn(0, bitmap.width - 1)
+                        cropY = (screenH * 0.12f).toInt().coerceIn(0, bitmap.height - 1)
+                        cropW = (screenW * 0.22f).toInt().coerceIn(1, bitmap.width - cropX)
+                        cropH = (screenH * 0.35f).toInt().coerceIn(1, bitmap.height - cropY)
+                    }
+                    isDungeonSelect -> {
+                        diagCode = 110
+                        diagnosisResult = "🗺️ [상태패턴: DUNGEON_SELECT] 맵 카드/입장 감지"
+                        targetAction = "퀘스트 맵 카드 또는 [입장] 버튼 터치"
+                        cropX = (screenW * 0.75f).toInt().coerceIn(0, bitmap.width - 1)
+                        cropY = (screenH * 0.75f).toInt().coerceIn(0, bitmap.height - 1)
+                        cropW = (screenW * 0.22f).toInt().coerceIn(1, bitmap.width - cropX)
+                        cropH = (screenH * 0.22f).toInt().coerceIn(1, bitmap.height - cropY)
+                    }
+                    isBlack -> {
+                        diagCode = 100
+                        diagnosisResult = "⬛ [상태패턴: DUNGEON_LOADING] 방 이동/로딩 암전"
+                        targetAction = "터치 차단 및 로딩 화면 대기"
+                    }
+                    growthState == GrowthState.TOWN_WALKING -> {
+                        diagCode = 171
+                        diagnosisResult = "🚶 [상태패턴: TOWN_WALKING] 길찾기 이동 중"
+                        targetAction = "10초 가다서다 방지 이동 보호 유지"
+                    }
+                    hasEpicQuest -> {
+                        diagCode = 170
+                        diagnosisResult = "⭐ [상태패턴: TOWN] 마을 에픽 퀘스트 감지"
+                        targetAction = "에픽 퀘스트 더블클릭 -> TOWN_WALKING(10초 이동) 전이"
+                        cropX = (screenW * 0.74f).toInt().coerceIn(0, bitmap.width - 1)
+                        cropY = (screenH * 0.14f).toInt().coerceIn(0, bitmap.height - 1)
+                        cropW = (screenW * 0.24f).toInt().coerceIn(1, bitmap.width - cropX)
+                        cropH = (screenH * 0.16f).toInt().coerceIn(1, bitmap.height - cropY)
+                    }
+                    pointingTip != null -> {
+                        diagCode = 172
+                        val (gx, gy) = pointingTip
+                        diagnosisResult = "👆 [상태패턴: TOWN] 안내 손가락/노란 원 감지"
+                        targetAction = "가이드 위치 ($gx, $gy) 터치"
+                        cropX = (gx - screenW * 0.05f).toInt().coerceIn(0, bitmap.width - 1)
+                        cropY = (gy - screenH * 0.05f).toInt().coerceIn(0, bitmap.height - 1)
+                        cropW = (screenW * 0.10f).toInt().coerceIn(1, bitmap.width - cropX)
+                        cropH = (screenH * 0.10f).toInt().coerceIn(1, bitmap.height - cropY)
+                    }
+                    isTown -> {
+                        diagCode = 180
+                        diagnosisResult = "🏘️ [상태패턴: TOWN] 마을 대기"
+                        targetAction = "퀘스트 배너 또는 NPC 상호작용 대기"
+                    }
+                    else -> {
+                        diagCode = 199
+                        diagnosisResult = "🔍 [상태패턴: $growthState] 화면 탐색 중"
+                        targetAction = "화면 변화 대기 중"
+                    }
+                }
+
+                val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, diagCode, diagnosisResult, targetAction, evidence)
+                bitmap.recycle()
+
+                val fullText = "%s\n👉 %s".format(diagnosisResult, targetAction)
+                StatusHudOverlay.updateStatus(diagCode, fullText)
+                DebugVisionOverlay.updateVision("D 진단: $diagnosisResult", evidence, targetAction)
+
                 mainHandler.post {
-                    android.widget.Toast.makeText(this@AutoClickAccessibilityService, "Android R 이상 지원", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(this@AutoClickAccessibilityService, "🔍 [D 진단 결과]\n$fullText", android.widget.Toast.LENGTH_LONG).show()
                 }
-                return@launch
+                Log.d(TAG, "🔍 [D 진단 결과] #$diagCode: $fullText")
+            } catch (t: Throwable) {
+                Log.e(TAG, "❌ [진단 예외 발생]", t)
             }
-
-            val bitmap = captureScreenshotSuspend()
-            if (bitmap == null) {
-                mainHandler.post {
-                    android.widget.Toast.makeText(this@AutoClickAccessibilityService, "❌ 화면 캡처 실패", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                return@launch
-            }
-
-            val displayMetrics = resources.displayMetrics
-            val screenW = displayMetrics.widthPixels
-            val screenH = displayMetrics.heightPixels
-
-            val isEquip = checkEquipPopupInBitmap(bitmap)
-            val isConfirm = checkConfirmPopupInBitmap(bitmap)
-            val isQuestSelect = checkQuestSelectPopupInBitmap(bitmap)
-            val isSkip = checkSkipDialogInBitmap(bitmap)
-            val isClear = checkRetryButtonInBitmap(bitmap)
-            val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
-            val hasEpicQuest = checkEpicBannerInBitmap(bitmap) || checkQuestAuraInBitmap(bitmap)
-            val pointingTip = checkPointingGuideInBitmap(bitmap)
-            val isBlack = isBlackTransitionScreen(bitmap)
-            val hasMiniMap = checkDungeonMiniMapInBitmap(bitmap)
-            val hasCombat = checkCombatControlsInBitmap(bitmap)
-            val isTown = checkTownScreenInBitmap(bitmap)
-
-            val diagnosisResult: String
-            val targetAction: String
-            val diagCode: Int
-
-            var cropX = (screenW * 0.74f).toInt().coerceIn(0, bitmap.width - 1)
-            var cropY = (screenH * 0.03f).toInt().coerceIn(0, bitmap.height - 1)
-            var cropW = (screenW * 0.24f).toInt().coerceAtMost(bitmap.width - cropX)
-            var cropH = (screenH * 0.30f).toInt().coerceAtMost(bitmap.height - cropY)
-
-            when {
-                isEquip -> {
-                    diagCode = 1
-                    val equipCoord = findEquipButtonInBitmap(bitmap) ?: Pair(screenW * 0.905f, screenH * 0.680f)
-                    val (eqX, eqY) = equipCoord
-                    diagnosisResult = "🛡️ [장비 획득] [장착] 팝업 감지"
-                    targetAction = "우하단 [장착](%.1f%%, %.1f%%) 클릭 예정".format(eqX / screenW * 100f, eqY / screenH * 100f)
-                    cropX = (eqX - screenW * 0.06f).toInt().coerceIn(0, bitmap.width - 1)
-                    cropY = (eqY - screenH * 0.08f).toInt().coerceIn(0, bitmap.height - 1)
-                    cropW = (screenW * 0.12f).toInt().coerceAtMost(bitmap.width - cropX)
-                    cropH = (screenH * 0.15f).toInt().coerceAtMost(bitmap.height - cropY)
-                }
-                isConfirm -> {
-                    diagCode = 150
-                    diagnosisResult = "📋 [확인 팝업] 중앙 확인 모달 감지"
-                    targetAction = "중앙 확인(56.0%, 63.0%) 클릭 예정"
-                    cropX = (screenW * 0.40f).toInt().coerceIn(0, bitmap.width - 1)
-                    cropY = (screenH * 0.38f).toInt().coerceIn(0, bitmap.height - 1)
-                    cropW = (screenW * 0.25f).toInt().coerceAtMost(bitmap.width - cropX)
-                    cropH = (screenH * 0.30f).toInt().coerceAtMost(bitmap.height - cropY)
-                }
-                isQuestSelect -> {
-                    diagCode = 160
-                    diagnosisResult = "📜 [NPC 퀘스트] 최상단 에픽 [보고/수락] 감지"
-                    targetAction = "최상단 에픽 보고/수락(65.5%, 35.5%) 클릭 예정"
-                    cropX = (screenW * 0.55f).toInt().coerceIn(0, bitmap.width - 1)
-                    cropY = (screenH * 0.25f).toInt().coerceIn(0, bitmap.height - 1)
-                    cropW = (screenW * 0.25f).toInt().coerceAtMost(bitmap.width - cropX)
-                    cropH = (screenH * 0.25f).toInt().coerceAtMost(bitmap.height - cropY)
-                }
-                isSkip -> {
-                    diagCode = 140
-                    diagnosisResult = "💬 [스토리 대화] 건너뛰기(✕) 감지"
-                    targetAction = "우상단 [건너뛰기 ✕](91.5%, 6.0%) 1초 5회 초고속 연타 예정"
-                    cropX = (screenW * 0.84f).toInt().coerceIn(0, bitmap.width - 1)
-                    cropY = (screenH * 0.02f).toInt().coerceIn(0, bitmap.height - 1)
-                    cropW = (screenW * 0.15f).toInt().coerceAtMost(bitmap.width - cropX)
-                    cropH = (screenH * 0.10f).toInt().coerceAtMost(bitmap.height - cropY)
-                }
-                hasMiniMap -> {
-                    diagCode = 121
-                    diagnosisResult = "⚔️ [상태패턴: DUNGEON_COMBAT] 미니맵 확인됨"
-                    targetAction = "공격 버튼(84.2%, 82.5%) 홀드 전투 수행"
-                    cropX = (screenW * 0.86f).toInt().coerceIn(0, bitmap.width - 1)
-                    cropY = (screenH * 0.035f).toInt().coerceIn(0, bitmap.height - 1)
-                    cropW = (screenW * 0.12f).toInt().coerceAtMost(bitmap.width - cropX)
-                    cropH = (screenH * 0.22f).toInt().coerceAtMost(bitmap.height - cropY)
-                }
-                isClear -> {
-                    diagCode = 130
-                    diagnosisResult = "🏆 [상태패턴: DUNGEON_CLEAR] 결과창 감지"
-                    targetAction = "우상단 다음 에픽 퀘스트(16.0%) 클릭 및 마을 복귀 대기"
-                    cropX = (screenW * 0.75f).toInt().coerceIn(0, bitmap.width - 1)
-                    cropY = (screenH * 0.12f).toInt().coerceIn(0, bitmap.height - 1)
-                    cropW = (screenW * 0.22f).toInt().coerceAtMost(bitmap.width - cropX)
-                    cropH = (screenH * 0.35f).toInt().coerceAtMost(bitmap.height - cropY)
-                }
-                isDungeonSelect -> {
-                    diagCode = 110
-                    diagnosisResult = "🗺️ [상태패턴: DUNGEON_SELECT] 맵 카드/입장 감지"
-                    targetAction = "퀘스트 맵 카드 또는 [입장] 버튼 터치"
-                    cropX = (screenW * 0.75f).toInt().coerceIn(0, bitmap.width - 1)
-                    cropY = (screenH * 0.75f).toInt().coerceIn(0, bitmap.height - 1)
-                    cropW = (screenW * 0.22f).toInt().coerceAtMost(bitmap.width - cropX)
-                    cropH = (screenH * 0.22f).toInt().coerceAtMost(bitmap.height - cropY)
-                }
-                isBlack -> {
-                    diagCode = 100
-                    diagnosisResult = "⬛ [상태패턴: DUNGEON_LOADING] 방 이동/로딩 암전"
-                    targetAction = "터치 차단 및 로딩 화면 대기"
-                }
-                growthState == GrowthState.TOWN_WALKING -> {
-                    diagCode = 171
-                    diagnosisResult = "🚶 [상태패턴: TOWN_WALKING] 길찾기 이동 중"
-                    targetAction = "10초 가다서다 방지 이동 보호 유지"
-                }
-                hasEpicQuest -> {
-                    diagCode = 170
-                    diagnosisResult = "⭐ [상태패턴: TOWN] 마을 에픽 퀘스트 감지"
-                    targetAction = "에픽 퀘스트 더블클릭 -> TOWN_WALKING(10초 이동) 전이"
-                    cropX = (screenW * 0.74f).toInt().coerceIn(0, bitmap.width - 1)
-                    cropY = (screenH * 0.14f).toInt().coerceIn(0, bitmap.height - 1)
-                    cropW = (screenW * 0.24f).toInt().coerceAtMost(bitmap.width - cropX)
-                    cropH = (screenH * 0.16f).toInt().coerceAtMost(bitmap.height - cropY)
-                }
-                pointingTip != null -> {
-                    diagCode = 172
-                    val (gx, gy) = pointingTip
-                    diagnosisResult = "👆 [상태패턴: TOWN] 안내 손가락/노란 원 감지"
-                    targetAction = "가이드 위치 ($gx, $gy) 터치"
-                    cropX = (gx - screenW * 0.05f).toInt().coerceIn(0, bitmap.width - 1)
-                    cropY = (gy - screenH * 0.05f).toInt().coerceIn(0, bitmap.height - 1)
-                    cropW = (screenW * 0.10f).toInt().coerceAtMost(bitmap.width - cropX)
-                    cropH = (screenH * 0.10f).toInt().coerceAtMost(bitmap.height - cropY)
-                }
-                isTown -> {
-                    diagCode = 180
-                    diagnosisResult = "🏘️ [상태패턴: TOWN] 마을 대기"
-                    targetAction = "퀘스트 배너 또는 NPC 상호작용 대기"
-                }
-                else -> {
-                    diagCode = 199
-                    diagnosisResult = "🔍 [상태패턴: $growthState] 화면 탐색 중"
-                    targetAction = "화면 변화 대기 중"
-                }
-            }
-
-            val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
-            ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, diagCode, diagnosisResult, targetAction, evidence)
-            bitmap.recycle()
-
-            val fullText = "%s\n👉 %s".format(diagnosisResult, targetAction)
-            StatusHudOverlay.updateStatus(diagCode, fullText)
-            DebugVisionOverlay.updateVision("D 진단: $diagnosisResult", evidence, targetAction)
-
-            mainHandler.post {
-                android.widget.Toast.makeText(this@AutoClickAccessibilityService, "🔍 [D 진단 결과]\n$fullText", android.widget.Toast.LENGTH_LONG).show()
-            }
-            Log.d(TAG, "🔍 [D 진단 결과] #$diagCode: $fullText")
         }
     }
 
@@ -445,23 +466,31 @@ class AutoClickAccessibilityService : AccessibilityService() {
             // 1. 장비 획득 [장착] 팝업
             val equipCoord = findEquipButtonInBitmap(bitmap)
             if (equipCoord != null) {
-                val (ex, ey) = equipCoord
-                val cropX = (ex - screenW * 0.05f).toInt().coerceIn(0, bitmap.width - 1)
-                val cropY = (ey - screenH * 0.05f).toInt().coerceIn(0, bitmap.height - 1)
-                val cropW = (screenW * 0.10f).toInt().coerceAtMost(bitmap.width - cropX)
-                val cropH = (screenH * 0.10f).toInt().coerceAtMost(bitmap.height - cropY)
-                val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
-                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 1, "🛡️ [팝업] 장비 획득 [장착]", "우하단 [장착]($ex, $ey) 클릭", evidence)
+                consecutiveEquipClicks++
+                if (consecutiveEquipClicks <= 2) {
+                    val (ex, ey) = equipCoord
+                    val cropX = (ex - screenW * 0.05f).toInt().coerceIn(0, bitmap.width - 1)
+                    val cropY = (ey - screenH * 0.05f).toInt().coerceIn(0, bitmap.height - 1)
+                    val cropW = (screenW * 0.10f).toInt().coerceAtMost(bitmap.width - cropX)
+                    val cropH = (screenH * 0.10f).toInt().coerceAtMost(bitmap.height - cropY)
+                    val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                    ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 1, "🛡️ [팝업] 장비 획득 [장착]", "우하단 [장착]($ex, $ey) 클릭", evidence)
 
-                StatusHudOverlay.updateStatus(1, "장비 획득: [장착] 감지 -> 즉시 장착 터치")
-                DebugVisionOverlay.updateVision("🛡️ 장비 장착 팝업", evidence, "장착 터치")
-                bitmap.recycle()
-                if (now - lastGrowthActionTime > 200L) {
-                    lastGrowthActionTime = now
-                    Log.d(TAG, "🛡️ [장비 장착] [장착] 버튼 클릭 ($ex, $ey)")
-                    tapSingle(ex, ey, 50L)
+                    StatusHudOverlay.updateStatus(1, "장비 획득: [장착] 감지 -> 즉시 장착 터치")
+                    DebugVisionOverlay.updateVision("🛡️ 장비 장착 팝업", evidence, "장착 터치")
+                    bitmap.recycle()
+                    if (now - lastGrowthActionTime > 200L) {
+                        lastGrowthActionTime = now
+                        Log.d(TAG, "🛡️ [장비 장착] [장착] 버튼 클릭 ($ex, $ey)")
+                        tapSingle(ex, ey, 50L)
+                    }
+                    return
+                } else {
+                    Log.w(TAG, "⚠️ [장비 장착] 2회 터치 완료 -> 다음 상태(전투시작/맵선택 등)로 자동 진행")
+                    consecutiveEquipClicks = 0
                 }
-                return
+            } else {
+                consecutiveEquipClicks = 0
             }
 
             // 2. 완료/확인/이동 중앙 확인 모달
@@ -1246,9 +1275,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun checkRetryButtonInBitmap(bitmap: Bitmap): Boolean {
-        // 0. 던전 선택 화면이면 절대 던전 클리어 메뉴가 아님!
-        if (checkDungeonSelectScreenInBitmap(bitmap)) return false
-
         val w = bitmap.width
         val h = bitmap.height
 
@@ -1729,7 +1755,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun findBattleStartButtonInBitmap(bitmap: Bitmap): Pair<Float, Float>? {
-        if (checkCombatControlsInBitmap(bitmap)) return null
+        // 던전 전투(미니맵) 중이거나 마을 화면이면 입장 버튼이 아님!
+        if (checkDungeonMiniMapInBitmap(bitmap) || checkTownScreenInBitmap(bitmap)) return null
 
         val w = bitmap.width
         val h = bitmap.height
@@ -1763,7 +1790,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
         if (total == 0) return null
         val ratio = goldPixels.toFloat() / total.toFloat()
-        if (ratio > 0.08f && goldPixels > 250) {
+        if (ratio > 0.03f && goldPixels > 300) {
             return Pair((sumX / goldPixels).toFloat(), (sumY / goldPixels).toFloat())
         }
         return null
@@ -1798,60 +1825,65 @@ class AutoClickAccessibilityService : AccessibilityService() {
         val w = bitmap.width
         val h = bitmap.height
 
+        // 0. 던전 선택창 화면(입장 버튼 감지)이거나 던전 전투 미니맵 중이면 절대 장착 팝업 아님!
+        if (checkDungeonMiniMapInBitmap(bitmap)) return null
+        if (checkBattleStartInBitmap(bitmap)) return null
+
         // 1) 위치 1: y: 68% (x: 90.5%) - 레벨업/일반 퀘스트 장비 획득 팝업
-        val b1StartX = (w * 0.85f).toInt().coerceIn(0, w - 1)
-        val b1EndX = (w * 0.95f).toInt().coerceIn(0, w)
-        val b1StartY = (h * 0.64f).toInt().coerceIn(0, h - 1)
-        val b1EndY = (h * 0.72f).toInt().coerceIn(0, h)
-        var orangeCount1 = 0
-        for (y in b1StartY until b1EndY step 4) {
-            for (x in b1StartX until b1EndX step 4) {
+        // 반드시 팝업 검은 배경 박스가 있어야 함!
+        val d1StartX = (w * 0.85f).toInt().coerceIn(0, w - 1)
+        val d1EndX = (w * 0.95f).toInt().coerceIn(0, w)
+        val d1StartY = (h * 0.50f).toInt().coerceIn(0, h - 1)
+        val d1EndY = (h * 0.64f).toInt().coerceIn(0, h)
+        var darkCount1 = 0
+        var total1 = 0
+        for (y in d1StartY until d1EndY step 4) {
+            for (x in d1StartX until d1EndX step 4) {
+                total1++
                 val p = bitmap.getPixel(x, y)
-                if (Color.red(p) in 150..240 && Color.green(p) in 80..180 && Color.blue(p) < 60) {
-                    orangeCount1++
+                if (Color.red(p) < 40 && Color.green(p) < 40 && Color.blue(p) < 40) {
+                    darkCount1++
                 }
             }
         }
-        if (orangeCount1 > 30) {
-            return Pair(w * 0.905f, h * 0.680f)
+        val isPopupBox1 = total1 > 0 && (darkCount1.toFloat() / total1.toFloat() > 0.40f)
+        if (isPopupBox1) {
+            val b1StartX = (w * 0.85f).toInt().coerceIn(0, w - 1)
+            val b1EndX = (w * 0.95f).toInt().coerceIn(0, w)
+            val b1StartY = (h * 0.64f).toInt().coerceIn(0, h - 1)
+            val b1EndY = (h * 0.72f).toInt().coerceIn(0, h)
+            var orangeCount1 = 0
+            for (y in b1StartY until b1EndY step 4) {
+                for (x in b1StartX until b1EndX step 4) {
+                    val p = bitmap.getPixel(x, y)
+                    if (Color.red(p) in 150..240 && Color.green(p) in 80..180 && Color.blue(p) < 60) {
+                        orangeCount1++
+                    }
+                }
+            }
+            if (orangeCount1 > 30) {
+                return Pair(w * 0.905f, h * 0.680f)
+            }
         }
 
         // 2) 위치 2: y: 85% (x: 88.5%) - 던전 완료 장비 획득 팝업
-        // 던전 전투(미니맵 존재) 중에는 황금 공격 버튼이므로 절대 장착 팝업이 아님!
-        if (!checkDungeonMiniMapInBitmap(bitmap)) {
-            var darkCount = 0
-            var total = 0
-            val dStartX = (w * 0.85f).toInt().coerceIn(0, w - 1)
-            val dEndX = (w * 0.93f).toInt().coerceIn(0, w)
-            val dStartY = (h * 0.62f).toInt().coerceIn(0, h - 1)
-            val dEndY = (h * 0.78f).toInt().coerceIn(0, h)
-            for (y in dStartY until dEndY step 4) {
-                for (x in dStartX until dEndX step 4) {
-                    total++
+        // 던전 클리어 결과 화면(`checkRetryButtonInBitmap`)에서만 나타남!
+        if (checkRetryButtonInBitmap(bitmap)) {
+            val b2StartX = (w * 0.82f).toInt().coerceIn(0, w - 1)
+            val b2EndX = (w * 0.95f).toInt().coerceIn(0, w)
+            val b2StartY = (h * 0.80f).toInt().coerceIn(0, h - 1)
+            val b2EndY = (h * 0.90f).toInt().coerceIn(0, h)
+            var orangeCount2 = 0
+            for (y in b2StartY until b2EndY step 4) {
+                for (x in b2StartX until b2EndX step 4) {
                     val p = bitmap.getPixel(x, y)
-                    if (Color.red(p) < 40 && Color.green(p) < 40 && Color.blue(p) < 40) {
-                        darkCount++
+                    if (Color.red(p) in 150..240 && Color.green(p) in 80..180 && Color.blue(p) < 60) {
+                        orangeCount2++
                     }
                 }
             }
-            val isPopupBox = total > 0 && (darkCount.toFloat() / total.toFloat() > 0.50f)
-            if (isPopupBox) {
-                val b2StartX = (w * 0.82f).toInt().coerceIn(0, w - 1)
-                val b2EndX = (w * 0.95f).toInt().coerceIn(0, w)
-                val b2StartY = (h * 0.80f).toInt().coerceIn(0, h - 1)
-                val b2EndY = (h * 0.90f).toInt().coerceIn(0, h)
-                var orangeCount2 = 0
-                for (y in b2StartY until b2EndY step 4) {
-                    for (x in b2StartX until b2EndX step 4) {
-                        val p = bitmap.getPixel(x, y)
-                        if (Color.red(p) in 150..240 && Color.green(p) in 80..180 && Color.blue(p) < 60) {
-                            orangeCount2++
-                        }
-                    }
-                }
-                if (orangeCount2 > 30) {
-                    return Pair(w * 0.885f, h * 0.850f)
-                }
+            if (orangeCount2 > 30) {
+                return Pair(w * 0.885f, h * 0.850f)
             }
         }
 
@@ -1981,37 +2013,15 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun checkDungeonSelectScreenInBitmap(bitmap: Bitmap): Boolean {
-        // 1. 전투 컨트롤(공격 버튼 or 조이스틱) 감지 시 절대 던전 선택창 아님!
-        if (checkCombatControlsInBitmap(bitmap)) return false
-
-        // 2. 마을 레이더/미니맵 감지 시 던전 선택창 아님!
+        // 1. 던전 사각 미니맵(전투 중)이거나 마을 화면이면 절대 던전 선택창 아님!
+        if (checkDungeonMiniMapInBitmap(bitmap)) return false
         if (checkTownScreenInBitmap(bitmap)) return false
+        if (checkRetryButtonInBitmap(bitmap)) return false
 
-        // 3. 우하단 [입장]/[전투시작] 버튼이 보이면 던전 선택창 판정
+        // 2. 우하단 [입장]/[전투시작] 버튼이 보이면 던전 선택창 판정
         if (checkBattleStartInBitmap(bitmap)) return true
 
-        val w = bitmap.width
-        val h = bitmap.height
-
-        // 4. 좌상단 뒤로가기 화살표 '<' 및 던전선택 타이틀 (x: 4% ~ 8%, y: 2% ~ 6%)
-        var backArrowPts = 0
-        val bStartX = (w * 0.04f).toInt().coerceIn(0, w - 1)
-        val bEndX = (w * 0.08f).toInt().coerceIn(0, w)
-        val bStartY = (h * 0.02f).toInt().coerceIn(0, h - 1)
-        val bEndY = (h * 0.06f).toInt().coerceIn(0, h)
-
-        for (y in bStartY until bEndY step 2) {
-            for (x in bStartX until bEndX step 2) {
-                val p = bitmap.getPixel(x, y)
-                val r = Color.red(p)
-                val g = Color.green(p)
-                val b = Color.blue(p)
-                if (r > 180 && g > 170 && b > 120) {
-                    backArrowPts++
-                }
-            }
-        }
-        return backArrowPts > 20
+        return false
     }
 
     private fun findQuestMapCardInBitmap(bitmap: Bitmap): Pair<Float, Float>? {
@@ -2186,45 +2196,48 @@ class AutoClickAccessibilityService : AccessibilityService() {
         return ratio > 0.015f
     }
 
+    private val screenshotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
     private suspend fun captureScreenshotSuspend(): Bitmap? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         val t0 = System.currentTimeMillis()
-        val result = withTimeoutOrNull(600L) {
+        val result = withTimeoutOrNull(2000L) {
             suspendCancellableCoroutine { cont ->
-                mainHandler.post {
-                    try {
-                        takeScreenshot(
-                            Display.DEFAULT_DISPLAY,
-                            mainHandler::post,
-                            object : AccessibilityService.TakeScreenshotCallback {
-                                override fun onSuccess(screenshotResult: AccessibilityService.ScreenshotResult) {
-                                    try {
-                                        val hardwareBitmap = Bitmap.wrapHardwareBuffer(
-                                            screenshotResult.hardwareBuffer,
-                                            screenshotResult.colorSpace
-                                        )
-                                        val softwareBitmap = hardwareBitmap?.copy(Bitmap.Config.ARGB_8888, false)
-                                        hardwareBitmap?.recycle()
-                                        screenshotResult.hardwareBuffer.close()
-                                        if (cont.isActive) cont.resume(softwareBitmap)
-                                    } catch (e: Exception) {
-                                        if (cont.isActive) cont.resume(null)
-                                    }
-                                }
-
-                                override fun onFailure(errorCode: Int) {
+                try {
+                    takeScreenshot(
+                        Display.DEFAULT_DISPLAY,
+                        screenshotExecutor,
+                        object : AccessibilityService.TakeScreenshotCallback {
+                            override fun onSuccess(screenshotResult: AccessibilityService.ScreenshotResult) {
+                                try {
+                                    val hardwareBitmap = Bitmap.wrapHardwareBuffer(
+                                        screenshotResult.hardwareBuffer,
+                                        screenshotResult.colorSpace
+                                    )
+                                    val softwareBitmap = hardwareBitmap?.copy(Bitmap.Config.ARGB_8888, false)
+                                    hardwareBitmap?.recycle()
+                                    screenshotResult.hardwareBuffer.close()
+                                    if (cont.isActive) cont.resume(softwareBitmap)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Bitmap wrap error", e)
                                     if (cont.isActive) cont.resume(null)
                                 }
                             }
-                        )
-                    } catch (e: Exception) {
-                        if (cont.isActive) cont.resume(null)
-                    }
+
+                            override fun onFailure(errorCode: Int) {
+                                Log.w(TAG, "takeScreenshot onFailure errorCode: $errorCode")
+                                if (cont.isActive) cont.resume(null)
+                            }
+                        }
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "takeScreenshot exception", e)
+                    if (cont.isActive) cont.resume(null)
                 }
             }
         }
         val elapsed = System.currentTimeMillis() - t0
-        if (elapsed > 200L) Log.d(TAG, "📷 captureScreenshot took ${elapsed}ms")
+        Log.d(TAG, "📷 captureScreenshot took ${elapsed}ms, result null? ${result == null}")
         return result
     }
 
