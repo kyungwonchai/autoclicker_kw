@@ -83,6 +83,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
         isRunning.set(true)
         runningSlotId = slotId
         isInDungeonState.set(true) // 5번 클릭 즉시 꾹 누르기(Hold) 즉각 시작!
+        hasDoneDungeonInitialClicks.set(false)
         growthState = GrowthState.DUNGEON_COMBAT
         onStatusChange?.invoke(true, slotId)
 
@@ -125,6 +126,19 @@ class AutoClickAccessibilityService : AccessibilityService() {
                         (targetPoint.yRatio * screenH).coerceIn(10f, screenH - 10f)
                     }
 
+                    // 1. 던전 처음 진입 시에만 5회 클릭 후 진입
+                    if (isGrowthModeEnabled.get() && !hasDoneDungeonInitialClicks.get()) {
+                        hasDoneDungeonInitialClicks.set(true)
+                        Log.d(TAG, "⚔️ [던전 진입] 던전 초입 5회 클릭 실행")
+                        for (i in 1..5) {
+                            if (!isActive || !isRunning.get() || !isInDungeonState.get()) break
+                            tapSingle(targetX, targetY, 40L)
+                            delay(80L)
+                        }
+                        if (!isActive || !isRunning.get() || !isInDungeonState.get()) continue
+                    }
+
+                    // 2. 그 다음부터는 텀을 두고 꾹 누르기(5초 홀드 공격)를 이어서 계속 반복
                     Log.d(TAG, "Starting continuous hold for $holdDurationMs ms at ($targetX, $targetY)")
 
                     isHoldingAttack.set(true)
@@ -142,33 +156,9 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
                     if (!isActive || !isRunning.get()) break
 
-                    // 던전 전투 상황일 때: 
-                    // 공격 홀드가 끝났으므로 순환 목록에서 스킬 1개를 시전하고, 다음 방 전진 이동(멍때림 완전 방지)
-                    if (isGrowthModeEnabled.get() && isInDungeonState.get()) {
-                        val (sx, sy) = combatSkills[nextSkillIndex % combatSkills.size]
-                        nextSkillIndex = (nextSkillIndex + 1) % combatSkills.size
-                        tapSingle(screenW * sx, screenH * sy, 40L)
-                        delay(60L)
-
-                        // 조이스틱(x: 17%, y: 72%)에서 우측(방향 교차)으로 전진 드래그 (방 이동 및 문턱 걸림 방지)
-                        val joyCenterX = screenW * 0.170f
-                        val joyCenterY = screenH * 0.720f
-                        val (targetJoyX, targetJoyY) = when (moveDirectionIndex % 4) {
-                            1 -> Pair(screenW * 0.310f, screenH * 0.650f) // 우상단
-                            3 -> Pair(screenW * 0.310f, screenH * 0.790f) // 우하단
-                            else -> Pair(screenW * 0.320f, screenH * 0.720f) // 직진 우측
-                        }
-                        moveDirectionIndex++
-
-                        swipeSingle(joyCenterX, joyCenterY, targetJoyX, targetJoyY, 700L)
-                        delay(60L)
-                    }
-
-                    if (delayAfterMs > 0 && !isGrowthModeEnabled.get()) {
-                        delay(delayAfterMs)
-                    } else {
-                        delay(50L)
-                    }
+                    // 3. 홀드 후 텀(간격 150ms)을 두고 이어서 반복
+                    val termMs = if (delayAfterMs > 0 && !isGrowthModeEnabled.get()) delayAfterMs else 150L
+                    delay(termMs)
                 }
             } catch (e: CancellationException) {
                 Log.d(TAG, "Slot $slotId execution cancelled")
@@ -204,6 +194,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
     private var lastPotionTime = 0L
     private val isGrowthModeEnabled = AtomicBoolean(true)
     private val isInDungeonState = AtomicBoolean(false)
+    private val hasDoneDungeonInitialClicks = AtomicBoolean(false)
     private val isHoldingAttack = AtomicBoolean(false)
     private var currentActiveSlot: ButtonSlot? = null
     private var currentActivePoint: ClickPoint? = null
@@ -346,6 +337,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 bitmap.recycle()
                 growthState = GrowthState.DUNGEON_CLEAR
                 isInDungeonState.set(false) // 전투 즉시 중단 및 홀드 차단
+                hasDoneDungeonInitialClicks.set(false)
 
                 if (now - lastClearQuestClickTime > 400L) {
                     lastClearQuestClickTime = now
@@ -380,7 +372,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
             if (inDungeon) {
                 growthState = GrowthState.DUNGEON_COMBAT
                 val isPickupHand = checkItemPickupInBitmap(bitmap)
-                val isEntrance = checkDungeonEntranceInBitmap(bitmap)
 
                 if (isPickupHand) {
                     bitmap.recycle()
@@ -388,21 +379,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
                     val pickupX = screenW * 0.825f
                     val pickupY = screenH * 0.825f
                     tapSingle(pickupX, pickupY, 40L)
-                    return
-                } else if (isEntrance) {
-                    bitmap.recycle()
-                    if (now - lastEntranceTriggerTime > 30000L) {
-                        lastEntranceTriggerTime = now
-                        Log.d(TAG, "🚩 [5-2순위: 던전 초입] 첫 방 감지됨! 멍때림 방지 3회 탭")
-                        val targetX = if (targetPoint.rawX > 0f) targetPoint.rawX.coerceIn(10f, screenW - 10f) else (targetPoint.xRatio * screenW).coerceIn(10f, screenW - 10f)
-                        val targetY = if (targetPoint.rawY > 0f) targetPoint.rawY.coerceIn(10f, screenH - 10f) else (targetPoint.yRatio * screenH).coerceIn(10f, screenH - 10f)
-                        for (i in 1..3) {
-                            if (!isRunning.get()) break
-                            tapSingle(targetX, targetY, 50L)
-                            if (!isRunning.get()) break
-                            delay(100L)
-                        }
-                    }
                     return
                 }
                 bitmap.recycle()
@@ -412,6 +388,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
             // 6순위: 던전 선택 화면 (반짝이는 사각형 지도 맵 카드 및 [입장] 버튼)
             if (isDungeonSelect) {
                 isInDungeonState.set(false)
+                hasDoneDungeonInitialClicks.set(false)
 
                 // 1) 반짝이는 퀘스트 타겟 맵 카드 감지 시 즉시 클릭!
                 val targetMapCard = findQuestMapCardInBitmap(bitmap)
@@ -1644,6 +1621,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
         runningSlotId = null
         currentActiveSlot = null
         currentActivePoint = null
+        hasDoneDungeonInitialClicks.set(false)
         executionJob?.cancel()
         executionJob = null
         monitorJob?.cancel()
