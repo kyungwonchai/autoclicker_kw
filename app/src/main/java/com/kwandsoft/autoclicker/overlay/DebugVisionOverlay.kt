@@ -116,6 +116,8 @@ object DebugVisionOverlay {
             metricsView?.text = metricsText
             if (cropBitmap != null && !cropBitmap.isRecycled) {
                 cropImageView?.setImageBitmap(cropBitmap)
+            } else {
+                cropImageView?.setImageDrawable(null)
             }
         }
     }

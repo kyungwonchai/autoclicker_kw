@@ -682,21 +682,30 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 val cropW = (screenW * 0.22f).toInt().coerceAtMost(bitmap.width - cropX)
                 val cropH = (screenH * 0.14f).toInt().coerceAtMost(bitmap.height - cropY)
                 val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
-                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 170, "⭐ [마을 화면] 우상단 [에픽] 퀘스트 배너 감지!", "우상단 에픽 퀘스트(85.0%, 21.0%) 클릭 후 길찾기 이동", evidence)
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 170, "⭐ [마을 화면] 우상단 [에픽] 퀘스트 배너 감지!", "우상단 에픽 퀘스트 더블클릭 후 10초 길찾기 이동 대기", evidence)
                 DebugVisionOverlay.updateVision("⭐ [8순위] 마을 [에픽] 퀘스트 배너", evidence, "마을 퀘스트 감지")
 
                 bitmap.recycle()
-                StatusHudOverlay.updateStatus(170, "마을 이동: 우상단 [에픽] 배너 감지 -> 클릭 후 길찾기 이동")
-                if (now - lastEpicQuestClickTime > 2500L) {
-                    lastEpicQuestClickTime = now
-                    growthState = GrowthState.TOWN_MOVING
-                    townMoveStartTime = now
-                    lastDialogActionTime = now
-                    Log.d(TAG, "⭐ [8순위: 우상단 에픽 퀘스트] 클릭 후 이동 대기 (85.0%, 21.0%)")
-                    val epicX = screenW * 0.850f
-                    val epicY = screenH * 0.210f
-                    tapSingle(epicX, epicY, 50L)
+
+                val elapsedSinceLastClick = now - lastEpicQuestClickTime
+                if (elapsedSinceLastClick < 10000L) {
+                    // 10초 동안은 캐릭터가 NPC로 걸어가도록 터치를 완전히 차단하여 가다서다(멈칫) 방지!
+                    val remainSec = ((10000L - elapsedSinceLastClick) / 1000L) + 1L
+                    StatusHudOverlay.updateStatus(171, "🚶 [마을 길찾기 이동 중] 목적지로 이동 중 (${remainSec}초 대기/가다서다 방지)")
+                    Log.d(TAG, "⭐ [8순위: 에픽 퀘스트 10초 대기] 가다서다 방지 이동 보호 (${remainSec}초 남음)")
+                    return
                 }
+
+                // 10초가 지났는데도 여전히 에픽 퀘스트 배너가 있으면 더블클릭 실행!
+                lastEpicQuestClickTime = now
+                growthState = GrowthState.TOWN_MOVING
+                townMoveStartTime = now
+                lastDialogActionTime = now
+                StatusHudOverlay.updateStatus(170, "마을 이동: 우상단 [에픽] 배너 더블클릭 -> 10초 이동 시작")
+                Log.d(TAG, "⭐ [8순위: 우상단 에픽 퀘스트] 10초 경과 후 재인식 -> 더블클릭 실행 (85.0%, 21.0%)")
+                val epicX = screenW * 0.850f
+                val epicY = screenH * 0.210f
+                tapDouble(epicX, epicY)
                 return
             }
 
@@ -1149,6 +1158,12 @@ class AutoClickAccessibilityService : AccessibilityService() {
         } finally {
             isDispatching.set(false)
         }
+    }
+
+    private suspend fun tapDouble(x: Float, y: Float, intervalMs: Long = 120L) {
+        tapSingle(x, y, 50L)
+        delay(intervalMs)
+        tapSingle(x, y, 50L)
     }
 
     private suspend fun holdSingle(x: Float, y: Float, durationMs: Long = 5000L) {
@@ -1624,12 +1639,15 @@ class AutoClickAccessibilityService : AccessibilityService() {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 우상단 거의 정사각형 모양의 던전 미니맵 영역 (x: 82% ~ 97%, y: 3% ~ 20%)
-        val startX = (w * 0.82f).toInt().coerceIn(0, w - 1)
+        // 우상단 사각형 던전 미니맵 영역 (x: 86% ~ 97%, y: 4% ~ 20%)
+        val startX = (w * 0.86f).toInt().coerceIn(0, w - 1)
         val endX = (w * 0.97f).toInt().coerceIn(0, w)
-        val startY = (h * 0.03f).toInt().coerceIn(0, h - 1)
+        val startY = (h * 0.04f).toInt().coerceIn(0, h - 1)
         val endY = (h * 0.20f).toInt().coerceIn(0, h)
 
+        var bluePin = 0
+        var redArrow = 0
+        var roomTiles = 0
         var darkPts = 0
         var total = 0
 
@@ -1641,9 +1659,21 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 val g = Color.green(p)
                 val b = Color.blue(p)
 
-                // 던전 미니맵의 반투명 검은 배경 (R,G,B < 55)
-                if (r < 55 && g < 55 && b < 55) {
+                // 1) 미니맵 반투명 어두운 배경 (R,G,B < 40)
+                if (r < 40 && g < 40 && b < 40) {
                     darkPts++
+                }
+                // 2) 플레이어 위치 콘 마커 (파란색)
+                if (b > 140 && r < 80 && g < 120 && (b - r) > 50) {
+                    bluePin++
+                }
+                // 3) 플레이어 방향 화살표 (빨간색 팁)
+                if (r > 180 && g < 70 && b < 50) {
+                    redArrow++
+                }
+                // 4) 던전 방(Room) 사각 격자 타일 (황토/갈색 타일)
+                if (r in 50..110 && g in 40..90 && b in 15..60 && r > b) {
+                    roomTiles++
                 }
             }
         }
@@ -1651,26 +1681,34 @@ class AutoClickAccessibilityService : AccessibilityService() {
         if (total == 0) return false
         val darkRatio = darkPts.toFloat() / total.toFloat()
 
-        // 마을의 목재 현판(wood) 비율 확인 (x: 88% ~ 96%, y: 3% ~ 9%)
-        val wStartX = (w * 0.88f).toInt().coerceIn(0, w - 1)
-        val wEndX = (w * 0.96f).toInt().coerceIn(0, w)
-        val wStartY = (h * 0.03f).toInt().coerceIn(0, h - 1)
-        val wEndY = (h * 0.09f).toInt().coerceIn(0, h)
-        var woodPts = 0
-        for (y in wStartY until wEndY step 2) {
-            for (x in wStartX until wEndX step 2) {
+        // 미니맵 바로 아래의 던전 이름 황금 텍스트 (x: 85% ~ 98%, y: 20% ~ 25%)
+        val nameStartX = (w * 0.85f).toInt().coerceIn(0, w - 1)
+        val nameEndX = (w * 0.98f).toInt().coerceIn(0, w)
+        val nameStartY = (h * 0.20f).toInt().coerceIn(0, h - 1)
+        val nameEndY = (h * 0.25f).toInt().coerceIn(0, h)
+        var yellowName = 0
+        for (y in nameStartY until nameEndY step 2) {
+            for (x in nameStartX until nameEndX step 2) {
                 val p = bitmap.getPixel(x, y)
                 val r = Color.red(p)
                 val g = Color.green(p)
                 val b = Color.blue(p)
-                if (r > 65 && g > 40 && r > b) {
-                    woodPts++
+                if (r > 180 && g > 130 && b < 70 && (r - b) > 90) {
+                    yellowName++
                 }
             }
         }
 
-        // 던전 미니맵은 어두운 박스 비율이 35% 이상이고 마을 목재 메뉴(woodPts > 2000)가 없어야 함
-        if (darkRatio < 0.35f || woodPts > 2000) return false
+        // 플레이어 핀(파란 마커 or 빨간 화살표) 존재 여부
+        val hasPlayerMarker = (bluePin >= 30 || (bluePin >= 15 && redArrow >= 20))
+        // 방 격자 구조 + 어두운 박스 비율
+        val hasRoomStructure = (roomTiles >= 2000 && darkRatio >= 0.25f)
+        // 던전 이름 텍스트 존재 여부
+        val hasDungeonName = (yellowName >= 100)
+
+        // 사각형 미니맵 형태 판정: (플레이어 마커 OR 방 격자 구조) && (던전명 OR 미니맵 다크박스 30% 이상)
+        val isSquareMinimap = (hasPlayerMarker || hasRoomStructure) && (hasDungeonName || darkRatio >= 0.30f)
+        if (!isSquareMinimap) return false
 
         // 전투 컨트롤(공격 버튼 or 조이스틱)이 실제로 존재해야 진짜 던전 전투 미니맵으로 인정!
         return checkCombatControlsInBitmap(bitmap)
@@ -2014,6 +2052,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
         monitorJob?.cancel()
         monitorJob = null
         StatusHudOverlay.updateStatus(0, "오토클리커 정지 (대기 중)")
+        DebugVisionOverlay.updateVision("⏹ [대기 상태] 오토클리커 정지", null, "정지됨: '▶' 시작 또는 'D' 진단")
 
         if (wasRunning) {
             // 실행 중인 제스처 즉각 중단을 위해 1ms 취소 스트로크 디스패치
