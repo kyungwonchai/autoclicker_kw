@@ -407,17 +407,55 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 return // 던전 전투 중에는 화면 헛클릭 일체 금지 (공격 5초 꾹 누르기 온전히 보장)
             }
 
-            // 6순위: 우상단 [에픽] 퀘스트 배너 (마을 길찾기 / 던전선택 자동지정 / 다음 퀘스트 진행)
-            // 팝업이나 던전 상태가 아닐 때 에픽 퀘스트 1회 터치 후 이동 대기 (쿨다운 4초)
+            // 6순위: 던전 선택 화면 (반짝이는 사각형 지도 맵 카드 및 [입장] 버튼)
+            val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
+            if (isDungeonSelect) {
+                isInDungeonState.set(false)
+
+                // 1) 반짝이는 퀘스트 타겟 맵 카드 감지 시 즉시 클릭!
+                val targetMapCard = findQuestMapCardInBitmap(bitmap)
+                if (targetMapCard != null) {
+                    if (now - lastMapCardClickTime > 600L) {
+                        lastMapCardClickTime = now
+                        growthState = GrowthState.DIALOG_PROGRESS
+                        lastDialogActionTime = now
+                        val (mcX, mcY) = targetMapCard
+                        bitmap.recycle()
+                        Log.d(TAG, "🗺️ [6순위: 던전 선택] 반짝이는 퀘스트 맵 카드 감지! ($mcX, $mcY) 즉시 클릭")
+                        tapSingle(mcX, mcY, 50L)
+                        return
+                    }
+                }
+
+                // 2) 우하단 [입장/전투시작] 버튼 감지 시 즉시 클릭!
+                val battleStartCoord = findBattleStartButtonInBitmap(bitmap)
+                if (battleStartCoord != null) {
+                    if (now - lastGrowthActionTime > 300L) {
+                        lastGrowthActionTime = now
+                        growthState = GrowthState.DIALOG_PROGRESS
+                        lastDialogActionTime = now
+                        val (batX, batY) = battleStartCoord
+                        bitmap.recycle()
+                        Log.d(TAG, "🌱 [6순위: 던전 선택] [입장/전투시작] 버튼 감지! ($batX, $batY) 클릭")
+                        tapSingle(batX, batY, 50L)
+                        return
+                    }
+                }
+
+                bitmap.recycle()
+                return // 던전 선택 화면에서는 마을 퀘스트 헛클릭 일체 차단!
+            }
+
+            // 7순위: 마을 우상단 [에픽] 퀘스트 배너 (마을 길찾기 / 이동)
             val hasEpicQuest = checkEpicBannerInBitmap(bitmap) || checkQuestAuraInBitmap(bitmap)
             if (hasEpicQuest) {
                 bitmap.recycle()
-                if (now - lastEpicQuestClickTime > 4000L) {
+                if (now - lastEpicQuestClickTime > 3500L) {
                     lastEpicQuestClickTime = now
                     growthState = GrowthState.TOWN_MOVING
                     townMoveStartTime = now
                     lastDialogActionTime = now
-                    Log.d(TAG, "⭐ [6순위: 우상단 에픽 퀘스트] 클릭 후 이동 대기 (86.5%, 18.3%)")
+                    Log.d(TAG, "⭐ [7순위: 우상단 에픽 퀘스트] 클릭 후 이동 대기 (86.5%, 18.3%)")
                     val epicX = screenW * 0.865f
                     val epicY = screenH * 0.183f
                     tapSingle(epicX, epicY, 50L)
@@ -425,7 +463,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // 7순위: 가이드 손가락 / 노란 원형 링 안내 (👆) (튜토리얼/안내 돌파)
+            // 8순위: 가이드 손가락 / 노란 원형 링 안내 (👆) (튜토리얼/안내 돌파)
             val pointingTip = checkPointingGuideInBitmap(bitmap)
             if (pointingTip != null) {
                 bitmap.recycle()
@@ -434,45 +472,9 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 if (now - lastGrowthActionTime > 200L) {
                     lastGrowthActionTime = now
                     val (gx, gy) = pointingTip
-                    Log.d(TAG, "👆 [7순위: 안내 손가락/원형 링] 안내 위치 클릭 ($gx, $gy)")
+                    Log.d(TAG, "👆 [8순위: 안내 손가락/원형 링] 안내 위치 클릭 ($gx, $gy)")
                     tapSingle(gx, gy, 50L)
                 }
-                return
-            }
-
-            // 8순위: 던전 선택 화면 (에픽 배너가 없을 때 수동 선택 보조)
-            val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
-            if (isDungeonSelect) {
-                isInDungeonState.set(false)
-                val battleStartCoord = findBattleStartButtonInBitmap(bitmap)
-                if (battleStartCoord != null) {
-                    bitmap.recycle()
-                    growthState = GrowthState.DIALOG_PROGRESS
-                    lastDialogActionTime = now
-                    if (now - lastGrowthActionTime > 300L) {
-                        lastGrowthActionTime = now
-                        val (batX, batY) = battleStartCoord
-                        Log.d(TAG, "🌱 [8순위: 던전 선택] [입장/전투시작] 버튼 감지! ($batX, $batY) 클릭")
-                        tapSingle(batX, batY, 50L)
-                    }
-                    return
-                }
-
-                // 깜박이는 맵 카드 감지 시 터치
-                if (now - lastMapCardClickTime > 2000L) {
-                    val targetMapCard = findQuestMapCardInBitmap(bitmap)
-                    if (targetMapCard != null) {
-                        bitmap.recycle()
-                        lastMapCardClickTime = now
-                        growthState = GrowthState.DIALOG_PROGRESS
-                        lastDialogActionTime = now
-                        val (mcX, mcY) = targetMapCard
-                        Log.d(TAG, "🗺️ [8순위: 던전 선택] 퀘스트 타겟 맵 카드 감지! ($mcX, $mcY) 클릭")
-                        tapSingle(mcX, mcY, 50L)
-                        return
-                    }
-                }
-                bitmap.recycle()
                 return
             }
 
