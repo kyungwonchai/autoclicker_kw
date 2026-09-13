@@ -57,6 +57,7 @@ class FloatingControlService : Service() {
     }
 
     override fun onDestroy() {
+        com.kwandsoft.autoclicker.overlay.ActionHistoryOverlay.hide()
         com.kwandsoft.autoclicker.overlay.DebugVisionOverlay.hide()
         com.kwandsoft.autoclicker.overlay.StatusHudOverlay.hide()
         overlayManager?.stopAll()

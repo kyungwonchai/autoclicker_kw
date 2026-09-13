@@ -22,6 +22,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import com.kwandsoft.autoclicker.overlay.StatusHudOverlay
 import com.kwandsoft.autoclicker.overlay.DebugVisionOverlay
+import com.kwandsoft.autoclicker.history.ActionHistoryManager
 
 class AutoClickAccessibilityService : AccessibilityService() {
 
@@ -390,6 +391,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
             }
 
             val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+            ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, diagCode, diagnosisResult, targetAction, evidence)
             bitmap.recycle()
 
             val fullText = "%s\n👉 %s".format(diagnosisResult, targetAction)
@@ -437,8 +439,15 @@ class AutoClickAccessibilityService : AccessibilityService() {
             // 0순위: 장비 획득 [장착] 팝업 (어떤 상태에서든 즉시 0순위로 장착 터치)
             val isEquipPopup = checkEquipPopupInBitmap(bitmap)
             if (isEquipPopup) {
+                val cropX = (screenW * 0.85f).toInt().coerceIn(0, bitmap.width - 1)
+                val cropY = (screenH * 0.60f).toInt().coerceIn(0, bitmap.height - 1)
+                val cropW = (screenW * 0.12f).toInt().coerceAtMost(bitmap.width - cropX)
+                val cropH = (screenH * 0.15f).toInt().coerceAtMost(bitmap.height - cropY)
+                val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 1, "🛡️ [장비 획득] [장착] 팝업 감지", "우하단 [장착](90.5%, 68.0%) 클릭", evidence)
+
                 StatusHudOverlay.updateStatus(1, "장비 획득 [장착] 팝업 감지 -> 즉시 장착 터치")
-                DebugVisionOverlay.updateVision("🛡️ [0순위] 장비 장착 팝업", null, "장비 획득")
+                DebugVisionOverlay.updateVision("🛡️ [0순위] 장비 장착 팝업", evidence, "장비 획득")
                 bitmap.recycle()
                 if (now - lastGrowthActionTime > 200L) {
                     lastGrowthActionTime = now
@@ -451,11 +460,18 @@ class AutoClickAccessibilityService : AccessibilityService() {
             // 1순위: 완료/확인/이동 팝업 (화면 중앙 모달: 확인 터치)
             val isConfirmPopup = checkConfirmPopupInBitmap(bitmap)
             if (isConfirmPopup) {
+                val cropX = (screenW * 0.40f).toInt().coerceIn(0, bitmap.width - 1)
+                val cropY = (screenH * 0.38f).toInt().coerceIn(0, bitmap.height - 1)
+                val cropW = (screenW * 0.25f).toInt().coerceAtMost(bitmap.width - cropX)
+                val cropH = (screenH * 0.30f).toInt().coerceAtMost(bitmap.height - cropY)
+                val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 150, "📋 [확인 팝업] 중앙 확인 모달 감지", "중앙 확인(56.0%, 63.0%) 클릭", evidence)
+
                 bitmap.recycle()
                 growthState = GrowthState.DIALOG_PROGRESS
                 lastDialogActionTime = now
                 StatusHudOverlay.updateStatus(150, "확인 팝업: 중앙 확인 모달 감지 -> 확인 터치")
-                DebugVisionOverlay.updateVision("📋 [1순위] 확인 팝업 모달", null, "확인 터치")
+                DebugVisionOverlay.updateVision("📋 [1순위] 확인 팝업 모달", evidence, "확인 터치")
                 if (now - lastGrowthActionTime > 200L) {
                     lastGrowthActionTime = now
                     Log.d(TAG, "🌱 [1순위: 완료/확인/이동 팝업] 중앙 확인(56%) 클릭")
@@ -469,11 +485,18 @@ class AutoClickAccessibilityService : AccessibilityService() {
             // 2순위: NPC 퀘스트 선택 / [보고]/[수락] (목록 최상단 에픽 퀘스트)
             val isQuestSelectPopup = checkQuestSelectPopupInBitmap(bitmap)
             if (isQuestSelectPopup) {
+                val cropX = (screenW * 0.55f).toInt().coerceIn(0, bitmap.width - 1)
+                val cropY = (screenH * 0.25f).toInt().coerceIn(0, bitmap.height - 1)
+                val cropW = (screenW * 0.25f).toInt().coerceAtMost(bitmap.width - cropX)
+                val cropH = (screenH * 0.25f).toInt().coerceAtMost(bitmap.height - cropY)
+                val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 160, "📜 [NPC 퀘스트] 최상단 에픽 [보고/수락] 감지", "최상단 에픽 보고/수락(65.5%, 35.5%) 클릭", evidence)
+
                 bitmap.recycle()
                 growthState = GrowthState.DIALOG_PROGRESS
                 lastDialogActionTime = now
                 StatusHudOverlay.updateStatus(160, "NPC 퀘스트: 최상단 에픽 [보고/수락] 감지 -> 터치")
-                DebugVisionOverlay.updateVision("📜 [2순위] NPC 퀘스트 보고/수락", null, "보고/수락 터치")
+                DebugVisionOverlay.updateVision("📜 [2순위] NPC 퀘스트 보고/수락", evidence, "보고/수락 터치")
                 if (now - lastGrowthActionTime > 200L) {
                     lastGrowthActionTime = now
                     Log.d(TAG, "🌱 [2순위: NPC 퀘스트] 최상단 에픽 [보고/수락] 버튼 클릭")
@@ -493,6 +516,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 val cropW = (screenW * 0.15f).toInt().coerceAtMost(bitmap.width - cropX)
                 val cropH = (screenH * 0.10f).toInt().coerceAtMost(bitmap.height - cropY)
                 val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 140, "💬 [스토리 대화] 건너뛰기(✕) 감지", "우상단 [건너뛰기 ✕](91.5%, 6.0%) 클릭", evidence)
                 DebugVisionOverlay.updateVision("💬 [3순위] 대화 건너뛰기 ✕", evidence, "Skip ✕ 감지")
 
                 bitmap.recycle()
@@ -509,7 +533,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // 2순위: 던전 클리어 메뉴 (보스 처치 후 결과 화면: [마을로 가기], [다시하기], [에픽 퀘스트])
+            // 4순위: 던전 클리어 메뉴 (보스 처치 후 결과 화면: [마을로 가기], [다시하기], [에픽 퀘스트])
             val isDungeonClear = checkRetryButtonInBitmap(bitmap)
             if (isDungeonClear) {
                 val cropX = (screenW * 0.75f).toInt().coerceIn(0, bitmap.width - 1)
@@ -517,7 +541,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 val cropW = (screenW * 0.22f).toInt().coerceAtMost(bitmap.width - cropX)
                 val cropH = (screenH * 0.40f).toInt().coerceAtMost(bitmap.height - cropY)
                 val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
-                DebugVisionOverlay.updateVision("🏆 [2순위] 던전 클리어 메뉴", evidence, "마을로가기+결과창")
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 130, "🏆 [던전 클리어] 마을로가기/결과창 감지", "우상단 다음 에픽 퀘스트(18.3%) 클릭", evidence)
+                DebugVisionOverlay.updateVision("🏆 [4순위] 던전 클리어 메뉴", evidence, "마을로가기+결과창")
 
                 bitmap.recycle()
                 growthState = GrowthState.DUNGEON_CLEAR
@@ -527,7 +552,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
                 if (now - lastClearQuestClickTime > 400L) {
                     lastClearQuestClickTime = now
-                    Log.d(TAG, "🌱 [2순위: 던전 클리어] 결과 화면 감지! 다음 에픽 퀘스트(18.3%) 즉시 클릭")
+                    Log.d(TAG, "🌱 [4순위: 던전 클리어] 결과 화면 감지! 다음 에픽 퀘스트(18.3%) 즉시 클릭")
                     val nextQuestX = screenW * 0.865f
                     val nextQuestY = screenH * 0.183f
                     tapSingle(nextQuestX, nextQuestY, 60L)
@@ -535,7 +560,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // 3순위: 던전 선택 화면 (반짝이는 사각형 지도 맵 카드 및 [입장] 버튼)
+            // 5순위: 던전 선택 화면 (반짝이는 사각형 지도 맵 카드 및 [입장] 버튼)
             val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
             if (isDungeonSelect) {
                 isInDungeonState.set(false)
@@ -544,15 +569,22 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 // 1) 반짝이는 퀘스트 타겟 맵 카드 감지 시 즉시 클릭!
                 val targetMapCard = findQuestMapCardInBitmap(bitmap)
                 if (targetMapCard != null) {
+                    val (mcX, mcY) = targetMapCard
+                    val cropX = (mcX - screenW * 0.08f).toInt().coerceIn(0, bitmap.width - 1)
+                    val cropY = (mcY - screenH * 0.08f).toInt().coerceIn(0, bitmap.height - 1)
+                    val cropW = (screenW * 0.16f).toInt().coerceAtMost(bitmap.width - cropX)
+                    val cropH = (screenH * 0.16f).toInt().coerceAtMost(bitmap.height - cropY)
+                    val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                    ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 110, "🗺️ [던전 선택] 반짝이는 퀘스트 카드 감지", "퀘스트 맵 카드 터치 ($mcX, $mcY)", evidence)
+
                     StatusHudOverlay.updateStatus(110, "던전 선택: 깜박이는 퀘스트 카드 감지 -> 맵 카드 터치")
-                    DebugVisionOverlay.updateVision("🗺️ [3순위] 퀘스트 맵 카드", null, "카드 발견")
+                    DebugVisionOverlay.updateVision("🗺️ [5순위] 퀘스트 맵 카드", evidence, "카드 발견")
                     if (now - lastMapCardClickTime > 600L) {
                         lastMapCardClickTime = now
                         growthState = GrowthState.DIALOG_PROGRESS
                         lastDialogActionTime = now
-                        val (mcX, mcY) = targetMapCard
                         bitmap.recycle()
-                        Log.d(TAG, "🗺️ [3순위: 던전 선택] 반짝이는 퀘스트 맵 카드 감지! ($mcX, $mcY) 즉시 클릭")
+                        Log.d(TAG, "🗺️ [5순위: 던전 선택] 반짝이는 퀘스트 맵 카드 감지! ($mcX, $mcY) 즉시 클릭")
                         tapSingle(mcX, mcY, 50L)
                         return
                     }
@@ -561,27 +593,34 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 // 2) 우하단 [입장/전투시작] 버튼 감지 시 즉시 클릭!
                 val battleStartCoord = findBattleStartButtonInBitmap(bitmap)
                 if (battleStartCoord != null) {
+                    val (batX, batY) = battleStartCoord
+                    val cropX = (screenW * 0.82f).toInt().coerceIn(0, bitmap.width - 1)
+                    val cropY = (screenH * 0.80f).toInt().coerceIn(0, bitmap.height - 1)
+                    val cropW = (screenW * 0.16f).toInt().coerceAtMost(bitmap.width - cropX)
+                    val cropH = (screenH * 0.18f).toInt().coerceAtMost(bitmap.height - cropY)
+                    val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                    ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 111, "⚔️ [던전 선택] [입장/전투시작] 버튼 감지", "입장 버튼 터치 ($batX, $batY)", evidence)
+
                     StatusHudOverlay.updateStatus(111, "던전 선택: [입장/전투시작] 버튼 감지 -> 입장 터치")
-                    DebugVisionOverlay.updateVision("⚔️ [3순위] 던전 입장 버튼", null, "입장 버튼")
+                    DebugVisionOverlay.updateVision("⚔️ [5순위] 던전 입장 버튼", evidence, "입장 버튼")
                     if (now - lastGrowthActionTime > 300L) {
                         lastGrowthActionTime = now
                         growthState = GrowthState.DIALOG_PROGRESS
                         lastDialogActionTime = now
-                        val (batX, batY) = battleStartCoord
                         bitmap.recycle()
-                        Log.d(TAG, "🌱 [3순위: 던전 선택] [입장/전투시작] 버튼 감지! ($batX, $batY) 클릭")
+                        Log.d(TAG, "🌱 [5순위: 던전 선택] [입장/전투시작] 버튼 감지! ($batX, $batY) 클릭")
                         tapSingle(batX, batY, 50L)
                         return
                     }
                 }
 
                 StatusHudOverlay.updateStatus(112, "던전 선택 화면 대기 중 (헛클릭 원천 차단)")
-                DebugVisionOverlay.updateVision("⏳ [3순위] 던전 선택 대기", null, "카드/버튼 대기")
+                DebugVisionOverlay.updateVision("⏳ [5순위] 던전 선택 대기", null, "카드/버튼 대기")
                 bitmap.recycle()
                 return // 던전 선택 화면에서는 마을 퀘스트 헛클릭 일체 차단!
             }
 
-            // 4순위: [마을 화면 최우선] 마을 우상단 [에픽] 퀘스트 배너 또는 안내 손가락
+            // 6순위: [마을 화면 최우선] 마을 우상단 [에픽] 퀘스트 배너 또는 안내 손가락
             // 던전 전투 검사보다 먼저 확인하여, 마을인데 던전 전투로 오인하는 것을 100% 원천 차단!
             val hasEpicQuest = checkEpicBannerInBitmap(bitmap) || checkQuestAuraInBitmap(bitmap)
             if (hasEpicQuest) {
@@ -593,7 +632,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 val cropW = (screenW * 0.22f).toInt().coerceAtMost(bitmap.width - cropX)
                 val cropH = (screenH * 0.14f).toInt().coerceAtMost(bitmap.height - cropY)
                 val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
-                DebugVisionOverlay.updateVision("⭐ [4순위] 마을 [에픽] 퀘스트 배너", evidence, "마을 퀘스트 감지")
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 170, "⭐ [마을 화면] 우상단 [에픽] 퀘스트 배너 감지!", "우상단 에픽 퀘스트(85.0%, 21.0%) 클릭 후 길찾기 이동", evidence)
+                DebugVisionOverlay.updateVision("⭐ [6순위] 마을 [에픽] 퀘스트 배너", evidence, "마을 퀘스트 감지")
 
                 bitmap.recycle()
                 StatusHudOverlay.updateStatus(170, "마을 이동: 우상단 [에픽] 배너 감지 -> 클릭 후 길찾기 이동")
@@ -602,7 +642,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
                     growthState = GrowthState.TOWN_MOVING
                     townMoveStartTime = now
                     lastDialogActionTime = now
-                    Log.d(TAG, "⭐ [4순위: 우상단 에픽 퀘스트] 클릭 후 이동 대기 (85.0%, 21.0%)")
+                    Log.d(TAG, "⭐ [6순위: 우상단 에픽 퀘스트] 클릭 후 이동 대기 (85.0%, 21.0%)")
                     val epicX = screenW * 0.850f
                     val epicY = screenH * 0.210f
                     tapSingle(epicX, epicY, 50L)
@@ -610,33 +650,40 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // 5순위: 가이드 손가락 / 노란 원형 링 안내 (👆) (튜토리얼/마을 안내 돌파)
+            // 7순위: 가이드 손가락 / 노란 원형 링 안내 (👆) (튜토리얼/마을 안내 돌파)
             val pointingTip = checkPointingGuideInBitmap(bitmap)
             if (pointingTip != null) {
                 isInDungeonState.set(false)
+                val (gx, gy) = pointingTip
+                val cropX = (gx - screenW * 0.05f).toInt().coerceIn(0, bitmap.width - 1)
+                val cropY = (gy - screenH * 0.05f).toInt().coerceIn(0, bitmap.height - 1)
+                val cropW = (screenW * 0.10f).toInt().coerceAtMost(bitmap.width - cropX)
+                val cropH = (screenH * 0.10f).toInt().coerceAtMost(bitmap.height - cropY)
+                val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 172, "👆 [안내 가이드] 손가락/노란 원형 링 감지", "가이드 위치 ($gx, $gy) 클릭", evidence)
+
                 bitmap.recycle()
                 growthState = GrowthState.DIALOG_PROGRESS
                 lastDialogActionTime = now
                 StatusHudOverlay.updateStatus(172, "마을 안내: 손가락/노란 원 안내 감지 -> 가이드 터치")
-                DebugVisionOverlay.updateVision("👆 [5순위] 가이드 손가락 안내", null, "손가락 좌표 터치")
+                DebugVisionOverlay.updateVision("👆 [7순위] 가이드 손가락 안내", evidence, "손가락 좌표 터치")
                 if (now - lastGrowthActionTime > 200L) {
                     lastGrowthActionTime = now
-                    val (gx, gy) = pointingTip
-                    Log.d(TAG, "👆 [5순위: 안내 손가락/원형 링] 안내 위치 클릭 ($gx, $gy)")
+                    Log.d(TAG, "👆 [7순위: 안내 손가락/원형 링] 안내 위치 클릭 ($gx, $gy)")
                     tapSingle(gx, gy, 50L)
                 }
                 return
             }
 
-            // 6순위: [검은 화면 무시]: 던전 방 이동/로딩 암전 (대화창/퀘스트가 아닌 순수한 방 이동 화면)
+            // 8순위: [검은 화면 무시]: 던전 방 이동/로딩 암전 (대화창/퀘스트가 아닌 순수한 방 이동 화면)
             if (isBlackTransitionScreen(bitmap)) {
                 StatusHudOverlay.updateStatus(100, "방 이동/로딩 암전 감지 -> 터치 차단 및 전투 상태 유지")
-                DebugVisionOverlay.updateVision("⬛ [6순위] 방 이동 암전 페이드", null, "암전 대기")
+                DebugVisionOverlay.updateVision("⬛ [8순위] 방 이동 암전 페이드", null, "암전 대기")
                 bitmap.recycle()
                 return
             }
 
-            // 7순위: [던전 내부 실제 전투 중] 우상단 미니맵 + 전투 조작계 동시 감지
+            // 9순위: [던전 내부 실제 전투 중] 우상단 미니맵 + 전투 조작계 동시 감지
             val hasMiniMap = checkDungeonMiniMapInBitmap(bitmap)
             val hasCombatControls = checkCombatControlsInBitmap(bitmap)
 
@@ -649,7 +696,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 val cropW = (screenW * 0.14f).toInt().coerceAtMost(bitmap.width - cropX)
                 val cropH = (screenH * 0.20f).toInt().coerceAtMost(bitmap.height - cropY)
                 val evidence = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
-                DebugVisionOverlay.updateVision("⚔️ [7순위] 던전 전투 미니맵", evidence, "미니맵 어두운 박스")
+                ActionHistoryManager.recordAction(this@AutoClickAccessibilityService, 121, "⚔️ [던전 전투] 우상단 미니맵 및 전투 조작계 감지", "공격 꾹 누르기 / 전투 진행", evidence)
+                DebugVisionOverlay.updateVision("⚔️ [9순위] 던전 전투 미니맵", evidence, "미니맵 어두운 박스")
 
                 val isPickupHand = checkItemPickupInBitmap(bitmap)
                 if (isPickupHand) {

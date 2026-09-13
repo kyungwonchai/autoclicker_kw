@@ -171,6 +171,12 @@ class FloatingOverlayManager(
         }
         buttonsContainer?.addView(debugBtn)
 
+        // 최근 10분 동작 기록 뷰어 버튼 (📋)
+        val historyBtn = createButton("📋", "#9C27B0") {
+            ActionHistoryOverlay.toggle(context)
+        }
+        buttonsContainer?.addView(historyBtn)
+
         // 닫기 (❌)
         val closeBtn = createButton("❌", "#F44336") {
             stopAll()
