@@ -242,7 +242,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in real-time monitor", e)
                 }
-                delay(80L) // 0.08초 주기 초고속 실시간 감지
+                delay(200L) // 0.2초 주기 안정적 실시간 감지 (안드로이드 캡처 레이트리밋 방지)
             }
         }
     }
@@ -372,7 +372,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 }
                 if (tot > 0) dark.toFloat() / tot else 0f
             }
-            val inDungeon = rawMiniMapDarkRatio > 0.35f
+            val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
+            val inDungeon = !isDungeonSelect && (rawMiniMapDarkRatio > 0.35f)
             isInDungeonState.set(inDungeon)
 
             if (inDungeon) {
@@ -408,7 +409,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
             }
 
             // 6순위: 던전 선택 화면 (반짝이는 사각형 지도 맵 카드 및 [입장] 버튼)
-            val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
             if (isDungeonSelect) {
                 isInDungeonState.set(false)
 
@@ -1310,22 +1310,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun checkDungeonSelectScreenInBitmap(bitmap: Bitmap): Boolean {
-        // 0. 미니맵이 존재하면 던전 내부 전투 중이므로 절대 던전 선택창이 아님!
-        val mw = bitmap.width; val mh = bitmap.height
-        val sx = (mw * 0.84f).toInt(); val ex = (mw * 0.97f).toInt()
-        val sy = (mh * 0.03f).toInt(); val ey = (mh * 0.22f).toInt()
-        var dark = 0; var tot = 0
-        for (y in sy until ey step 4) {
-            for (x in sx until ex step 4) {
-                tot++
-                val p = bitmap.getPixel(x, y)
-                if (Color.red(p) < 65 && Color.green(p) < 65 && Color.blue(p) < 65) dark++
-            }
-        }
-        if (tot > 0 && (dark.toFloat() / tot > 0.35f)) {
-            return false
-        }
-
         // 1. 마을 레이더/미니맵 감지 시 던전 선택창 아님!
         if (checkTownScreenInBitmap(bitmap)) return false
 
@@ -1335,7 +1319,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 2. 좌상단 [던전 선택] 흰색/밝은 텍스트 (x: 5% ~ 20%, y: 2% ~ 7%)
+        // 3. 좌상단 [던전 선택] 흰색/밝은 텍스트 (x: 5% ~ 20%, y: 2% ~ 7%)
         var titlePts = 0
         val tStartX = (w * 0.05f).toInt().coerceIn(0, w - 1)
         val tEndX = (w * 0.20f).toInt().coerceIn(0, w)
