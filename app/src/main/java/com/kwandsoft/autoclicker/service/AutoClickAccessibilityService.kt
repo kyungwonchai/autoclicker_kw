@@ -296,15 +296,26 @@ class AutoClickAccessibilityService : AccessibilityService() {
             // [에픽]이 화면에 보이면 그 어떤 잡다한 버튼/손가락/스킵보다 무조건 최우선으로 터치!
             val hasEpicQuest = checkEpicBannerInBitmap(bitmap) || checkQuestAuraInBitmap(bitmap)
             if (hasEpicQuest) {
-                bitmap.recycle()
-                if (now - lastEpicQuestClickTime > 1200L) {
+                // 1) 퀘스트 영역에 '이동 중' 텍스트가 감지되면 캐릭터가 목적지에 도착할 때까지 절대 재클릭 금지!
+                if (checkMovingInTownInBitmap(bitmap)) {
+                    bitmap.recycle()
+                    Log.d(TAG, "🏃 [캐릭키움] '이동 중' 텍스트 감지! 캐릭터 이동 완료 대기 (재클릭 방지)")
+                    return
+                }
+
+                // 2) '이동 중'이 아닐 때만 퀘스트 1회 클릭 후 대기 (재클릭 방지 쿨다운 6초)
+                if (now - lastEpicQuestClickTime > 6000L) {
+                    bitmap.recycle()
                     lastEpicQuestClickTime = now
-                    growthState = GrowthState.DIALOG_PROGRESS
+                    growthState = GrowthState.TOWN_MOVING
+                    townMoveStartTime = now
                     lastDialogActionTime = now
-                    Log.d(TAG, "⭐ [1순위: 우상단 에픽 퀘스트] 최우선 터치! (86.5%, 18.3%)")
+                    Log.d(TAG, "⭐ [1순위: 우상단 에픽 퀘스트] 최우선 터치 후 이동 대기 (86.5%, 18.3%)")
                     val epicX = screenW * 0.865f
                     val epicY = screenH * 0.183f
                     tapSingle(epicX, epicY, 50L)
+                } else {
+                    bitmap.recycle()
                 }
                 return // 에픽 퀘스트가 떠 있는 동안에는 딴 짓 절대 금지!
             }
@@ -1038,6 +1049,41 @@ class AutoClickAccessibilityService : AccessibilityService() {
         }
 
         return null
+    }
+
+    private fun checkMovingInTownInBitmap(bitmap: Bitmap): Boolean {
+        val w = bitmap.width
+        val h = bitmap.height
+
+        // 퀘스트 박스 하단 '이동 중' 텍스트 영역 (x: 82% ~ 94%, y: 19% ~ 25%)
+        val startX = (w * 0.82f).toInt().coerceIn(0, w - 1)
+        val endX = (w * 0.94f).toInt().coerceIn(0, w)
+        val startY = (h * 0.19f).toInt().coerceIn(0, h - 1)
+        val endY = (h * 0.25f).toInt().coerceIn(0, h)
+
+        var total = 0
+        var movingTextPixels = 0
+
+        for (y in startY until endY step 2) {
+            for (x in startX until endX step 2) {
+                total++
+                val p = bitmap.getPixel(x, y)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+
+                // 1) 흰색 텍스트 "이동 중" (R,G,B > 160)
+                // 2) 노란색 텍스트 "이동 중" (R > 180, G > 160, B < 80)
+                if ((r > 160 && g > 160 && b > 160) || (r > 180 && g > 160 && b < 80)) {
+                    movingTextPixels++
+                }
+            }
+        }
+
+        if (total == 0) return false
+        val ratio = movingTextPixels.toFloat() / total.toFloat()
+        // 이동 중 텍스트가 표시되면 해당 영역에 3% 이상 및 150픽셀 이상 검출됨
+        return ratio > 0.030f && movingTextPixels > 150
     }
 
     private fun checkSkipDialogInBitmap(bitmap: Bitmap): Boolean {
