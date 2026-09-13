@@ -82,8 +82,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
         isRunning.set(true)
         runningSlotId = slotId
-        isInDungeonState.set(false)
-        growthState = GrowthState.TOWN_IDLE
+        isInDungeonState.set(true) // 5번 클릭 즉시 꾹 누르기(Hold) 즉각 시작!
+        growthState = GrowthState.DUNGEON_COMBAT
         onStatusChange?.invoke(true, slotId)
 
         val displayMetrics = resources.displayMetrics
@@ -372,8 +372,9 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 }
                 if (tot > 0) dark.toFloat() / tot else 0f
             }
-            val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
-            val inDungeon = !isDungeonSelect && (rawMiniMapDarkRatio > 0.35f)
+            val isCombat = checkCombatControlsInBitmap(bitmap) || (rawMiniMapDarkRatio > 0.35f)
+            val isDungeonSelect = !isCombat && checkDungeonSelectScreenInBitmap(bitmap)
+            val inDungeon = isCombat && !isDungeonSelect
             isInDungeonState.set(inDungeon)
 
             if (inDungeon) {
@@ -1217,6 +1218,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun findBattleStartButtonInBitmap(bitmap: Bitmap): Pair<Float, Float>? {
+        if (checkCombatControlsInBitmap(bitmap)) return null
+
         val w = bitmap.width
         val h = bitmap.height
 
@@ -1309,35 +1312,81 @@ class AutoClickAccessibilityService : AccessibilityService() {
         return total > 0 && (darkPts.toFloat() / total > 0.30f)
     }
 
+    private fun checkCombatControlsInBitmap(bitmap: Bitmap): Boolean {
+        val w = bitmap.width
+        val h = bitmap.height
+
+        // 1. 공격 버튼 영역 (x: 75% ~ 82%, y: 80% ~ 90%) - 황금색 검 아이콘
+        val startX = (w * 0.75f).toInt().coerceIn(0, w - 1)
+        val endX = (w * 0.82f).toInt().coerceIn(0, w)
+        val startY = (h * 0.80f).toInt().coerceIn(0, h - 1)
+        val endY = (h * 0.90f).toInt().coerceIn(0, h)
+        var atkPts = 0
+        for (y in startY until endY step 4) {
+            for (x in startX until endX step 4) {
+                val p = bitmap.getPixel(x, y)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+                if (r > 120 && g > 90 && b < 80 && (r - b) > 40) {
+                    atkPts++
+                }
+            }
+        }
+        if (atkPts > 80) return true
+
+        // 2. 조이스틱 영역 (x: 14% ~ 20%, y: 66% ~ 77%) - 조이스틱 링
+        val jStartX = (w * 0.14f).toInt().coerceIn(0, w - 1)
+        val jEndX = (w * 0.20f).toInt().coerceIn(0, w)
+        val jStartY = (h * 0.66f).toInt().coerceIn(0, h - 1)
+        val jEndY = (h * 0.77f).toInt().coerceIn(0, h)
+        var joyPts = 0
+        for (y in jStartY until jEndY step 4) {
+            for (x in jStartX until jEndX step 4) {
+                val p = bitmap.getPixel(x, y)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+                if (r in 60..150 && g in 50..130 && b in 40..110) {
+                    joyPts++
+                }
+            }
+        }
+        return joyPts > 60
+    }
+
     private fun checkDungeonSelectScreenInBitmap(bitmap: Bitmap): Boolean {
-        // 1. 마을 레이더/미니맵 감지 시 던전 선택창 아님!
+        // 1. 전투 컨트롤(공격 버튼 or 조이스틱) 감지 시 절대 던전 선택창 아님!
+        if (checkCombatControlsInBitmap(bitmap)) return false
+
+        // 2. 마을 레이더/미니맵 감지 시 던전 선택창 아님!
         if (checkTownScreenInBitmap(bitmap)) return false
 
-        // 2. 우하단 [입장]/[전투시작] 버튼이 보이면 던전 선택창 판정
+        // 3. 우하단 [입장]/[전투시작] 버튼이 보이면 던전 선택창 판정
         if (checkBattleStartInBitmap(bitmap)) return true
 
         val w = bitmap.width
         val h = bitmap.height
 
-        // 3. 좌상단 [던전 선택] 흰색/밝은 텍스트 (x: 5% ~ 20%, y: 2% ~ 7%)
-        var titlePts = 0
-        val tStartX = (w * 0.05f).toInt().coerceIn(0, w - 1)
-        val tEndX = (w * 0.20f).toInt().coerceIn(0, w)
-        val tStartY = (h * 0.02f).toInt().coerceIn(0, h - 1)
-        val tEndY = (h * 0.07f).toInt().coerceIn(0, h)
+        // 4. 좌상단 뒤로가기 화살표 '<' 및 던전선택 타이틀 (x: 4% ~ 8%, y: 2% ~ 6%)
+        var backArrowPts = 0
+        val bStartX = (w * 0.04f).toInt().coerceIn(0, w - 1)
+        val bEndX = (w * 0.08f).toInt().coerceIn(0, w)
+        val bStartY = (h * 0.02f).toInt().coerceIn(0, h - 1)
+        val bEndY = (h * 0.06f).toInt().coerceIn(0, h)
 
-        for (y in tStartY until tEndY step 2) {
-            for (x in tStartX until tEndX step 2) {
+        for (y in bStartY until bEndY step 2) {
+            for (x in bStartX until bEndX step 2) {
                 val p = bitmap.getPixel(x, y)
                 val r = Color.red(p)
                 val g = Color.green(p)
                 val b = Color.blue(p)
-                if (r > 180 && g > 180 && b > 160) {
-                    titlePts++
+                if (r > 180 && g > 170 && b > 120) {
+                    backArrowPts++
                 }
             }
         }
-        return titlePts > 150
+        return backArrowPts > 20
     }
 
     private fun findQuestMapCardInBitmap(bitmap: Bitmap): Pair<Float, Float>? {

@@ -90,4 +90,17 @@
 | **7순위** | **마을 우상단 [에픽] 퀘스트** | `(x=86.5%, y=18.3%)` 탭 | 마을 길찾기 이동 (3.5초 쿨다운) |
 | **8순위** | **가이드 손가락/링 (👆)** | `(tipX, tipY)` 탭 | 튜토리얼 돌파 |
 
+---
 
+## 10. 던전 진입 후 공격하지 않고 멍때리며 맞고만 있던 버그
+* **증상**: 던전에 들어왔는데 공격을 전혀 하지 않고 처맞고만 있으며, 바닥에 엉뚱한 터치가 튀는 문제.
+* **원인 (실수)**:
+  - 1) `checkDungeonSelectScreenInBitmap`에서 좌상단 흰색 픽셀 판정(`titlePts > 150`)을 사용했는데, 실제 던전 전투 중 좌상단에 표시되는 캐릭터 닉네임/레벨/계급 흰색 텍스트(1340픽셀)가 이를 만족해 **전투 중에도 던전 선택창으로 오탐**됨.
+  - 2) 이로 인해 `isInDungeonState = false`가 되어 `executionJob`의 공격 꾹 누르기(5초 홀드)가 완전히 정지됨.
+  - 3) 또한 던전 선택창으로 오탐된 상태에서 `findQuestMapCardInBitmap`이 실행되어, 전투 중 발생하는 몬스터 피격/스킬 이펙트 점멸을 맵 카드로 착각하고 바닥을 난타함.
+  - 4) `startSlotExecution` 시작 시 `isInDungeonState` 초기값이 `false`로 되어 있어 5번을 눌렀을 때 즉시 홀드로 진입하지 못함.
+* **해결 조치**:
+  - 1) **전투 컨트롤 판정기(`checkCombatControlsInBitmap`) 신설**: 화면에 황금색 검 공격 버튼(`atkPts > 80`) 또는 조이스틱 링(`joyPts > 60`)이 감지되면 **무조건 던전 전투 중(`isCombat = true`)**으로 즉시 판정.
+  - 2) 던전 선택창 판정에서 `checkCombatControlsInBitmap` 감지 시 즉시 `false` 반환하여 전투 중 던전 선택창 오탐 원천 차단.
+  - 3) `startSlotExecution` 시작 시 `isInDungeonState` 초기값을 `true`로 설정하여 사용자가 5번 버튼을 누르자마자 즉각 5초 공격 홀드 시작.
+  - 4) `findBattleStartButtonInBitmap` 및 `findQuestMapCardInBitmap`에도 전투 컨트롤 감지 시 즉시 차단하는 이중 안전장치 적용.
