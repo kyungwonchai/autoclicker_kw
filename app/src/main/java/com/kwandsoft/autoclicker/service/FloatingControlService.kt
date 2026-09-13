@@ -38,6 +38,22 @@ class FloatingControlService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            "ACTION_DIAGNOSE" -> {
+                AutoClickAccessibilityService.instance?.diagnoseCurrentScreenState()
+            }
+            "ACTION_START_SLOT" -> {
+                val slotIndex = intent.getIntExtra("slot_index", 0)
+                overlayManager?.toggleSlotPlay(slotIndex)
+            }
+            "ACTION_STOP" -> {
+                overlayManager?.stopAll()
+            }
+        }
+        return START_STICKY
+    }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()

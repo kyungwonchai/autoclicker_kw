@@ -280,7 +280,7 @@ class FloatingOverlayManager(
         pointOverlay?.updateScreenOrientation()
     }
 
-    private fun toggleSlotPlay(slotIndex: Int) {
+    fun toggleSlotPlay(slotIndex: Int) {
         val service = AutoClickAccessibilityService.instance ?: return
         val runningSlotId = service.getRunningSlotId()
         val targetSlot = slots[slotIndex]
