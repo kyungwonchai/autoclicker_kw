@@ -443,3 +443,22 @@
      - `consecutiveEquipClicks` 카운터를 도입하여, [장착] 버튼이 2회 연속 터치된 후에도 동일 판정이 지속될 경우 즉시 해당 인터럽트를 통과시켜 상태 머신(던전 선택 / 전투시작 등)이 지연 없이 바로 실행되도록 방어 로직 구현.
   5. **진단(D) 툴 안정성 강화**:
      - `diagnoseCurrentScreenState`에서 `resources.displayMetrics` 대신 캡처된 `bitmap.width`, `bitmap.height`를 직접 참조하고, `try-catch`로 예외를 완벽 보호.
+
+## 30. [미해결 / 다음 작업 대상] 캐릭키움 자동 실행 루프 중 던전 [전투시작/입장] 버튼 미터치 현상
+* **상태**: 🚨 **미해결 (Next Action Item)** - 사용자 피드백: "전투시작을 못 누르고 여전히 멈춤"
+* **증상**:
+  - 수동 진단(`ACTION_DIAGNOSE`, `D` 버튼) 실행 시에는 `#110 DUNGEON_SELECT` 상태 및 맵 카드/입장 감지로 판별되나, 사용자가 실제로 **캐릭키움(🌱) 자동 루프를 구동했을 때는 던전 선택창에서 [전투시작 / 입장] 버튼을 누르지 못하고 멈춰있거나 다음 진행이 안 됨**.
+* **현재 분석된 의심 원인 및 체크포인트 (다음 작업 시 즉시 검증할 내용)**:
+  1. **마을 길찾기(TOWN_WALKING) 10초 락 간섭**:
+     - 마을에서 에픽 퀘스트를 누른 뒤 `growthState = GrowthState.TOWN_WALKING`으로 진입하여 `10초 락(townMoveStartTime)`이 유지되는 도중에 던전 선택창이 떴을 경우, `TOWN_WALKING` 상태 블록에서 던전 선택창 전이 검사가 누락되었거나 10초 동안 터치가 완전 차단되어 대기만 하고 있을 가능성.
+  2. **맵 카드 우선순위 함정 (`findQuestMapCardInBitmap`)**:
+     - `handleDungeonSelectState`에서 1순위로 `findQuestMapCardInBitmap`을 검사하는데, 화면의 플래시 애니메이션이나 노란색 노이즈로 인해 엉뚱한 좌표를 맵 카드로 오인하여 계속 맵 카드만 누르거나, 반대로 플래시 감지가 루프 딜레이와 엇갈려 아무것도 터치하지 못하고 `StatusHudOverlay 112: 대기 중`에 머물 가능성.
+  3. **터치 제스처 디스패치(`tapSingle`) 락/실패**:
+     - `isDispatching` 플래그가 선행 제스처나 화면 캡처 대기로 인해 풀리지 않아 `tapSingle` 호출이 무시되거나, `now - lastGrowthActionTime > 300L` 쿨다운 및 `growthState = DUNGEON_LOADING` 전이 시점의 타이밍 꼬임.
+  4. **좌표 히트박스(Hitbox) 검증**:
+     - 실기기 기준 계산된 `(batX, batY)` 좌표(`83.6%, 85.2%` = `2609px, 1226px`)가 던전 선택창의 [입장/전투시작] 버튼의 유효 클릭 영역(안쪽)인지, 테두리나 비활성화 영역에 걸치는지 확인 필요.
+* **다음 작업 시 해결 액션 플랜**:
+  1. `TOWN_WALKING` 상태에서 `checkDungeonSelectScreenInBitmap` 감지 시 10초 락을 즉시 파기하고 `DUNGEON_SELECT`로 강제 전이하도록 탈출구 보장.
+  2. 던전 선택창에서 [입장/전투시작] 버튼이 활성화되어 있다면, 맵 카드 감지 여부와 관계없이 [입장] 버튼을 최우선으로 즉시 터치하도록 우선순위 조정.
+  3. `AutoClickAccessibilityService.kt`의 실제 자동 루프(`checkAndHandleScreenState`)에 `DUNGEON_SELECT` 진입 및 `handleDungeonSelectState` 실행 단계별 상세 로그(`Log.d`)를 추가하여 터치 디스패치 여부를 직접 확인.
+
