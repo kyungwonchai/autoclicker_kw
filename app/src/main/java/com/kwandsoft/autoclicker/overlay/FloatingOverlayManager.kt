@@ -160,6 +160,17 @@ class FloatingOverlayManager(
         }
         buttonsContainer?.addView(centerTargetBtn)
 
+        // 디버그 원샷 진단 버튼 (D)
+        val debugBtn = createButton("D", "#00BCD4") {
+            val service = AutoClickAccessibilityService.instance
+            if (service != null) {
+                service.diagnoseCurrentScreenState()
+            } else {
+                Toast.makeText(context, "접근성 서비스가 연결되지 않았습니다.", Toast.LENGTH_SHORT).show()
+            }
+        }
+        buttonsContainer?.addView(debugBtn)
+
         // 닫기 (❌)
         val closeBtn = createButton("❌", "#F44336") {
             stopAll()

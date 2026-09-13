@@ -47,6 +47,8 @@ class FloatingControlService : Service() {
             stopSelf()
         }
         overlayManager?.show()
+        com.kwandsoft.autoclicker.overlay.StatusHudOverlay.show(this)
+        com.kwandsoft.autoclicker.overlay.DebugVisionOverlay.show(this)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -55,6 +57,8 @@ class FloatingControlService : Service() {
     }
 
     override fun onDestroy() {
+        com.kwandsoft.autoclicker.overlay.DebugVisionOverlay.hide()
+        com.kwandsoft.autoclicker.overlay.StatusHudOverlay.hide()
         overlayManager?.stopAll()
         overlayManager = null
         super.onDestroy()
