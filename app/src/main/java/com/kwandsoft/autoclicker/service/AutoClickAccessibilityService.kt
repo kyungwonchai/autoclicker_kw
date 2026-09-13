@@ -936,11 +936,30 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun checkEpicBannerInBitmap(bitmap: Bitmap): Boolean {
-        // 던전 미니맵이 떠 있으면 절대 마을 에픽 퀘스트 배너가 아님! (던전명 황금 텍스트 오탐 100% 원천 차단)
-        if (checkDungeonMiniMapInBitmap(bitmap)) return false
-
         val w = bitmap.width
         val h = bitmap.height
+
+        // 마을의 목재 현판(wood) 또는 마을 레이더 확인 (던전 화면 원천 차단, 순환 호출 방지)
+        val wStartX = (w * 0.88f).toInt().coerceIn(0, w - 1)
+        val wEndX = (w * 0.96f).toInt().coerceIn(0, w)
+        val wStartY = (h * 0.03f).toInt().coerceIn(0, h - 1)
+        val wEndY = (h * 0.09f).toInt().coerceIn(0, h)
+        var woodPts = 0
+        for (y in wStartY until wEndY step 2) {
+            for (x in wStartX until wEndX step 2) {
+                val p = bitmap.getPixel(x, y)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+                if (r > 65 && g > 40 && r > b) {
+                    woodPts++
+                }
+            }
+        }
+        // 던전은 목재 현판이 없음 (woodPts <= 2000). 마을 에픽 배너는 마을 목재 현판(woodPts > 2000) 또는 마을 화면에서만 유효!
+        if (woodPts <= 2000 && !checkTownScreenInBitmap(bitmap)) {
+            return false
+        }
 
         // 우측 상단 퀘스트 패널 영역 (x: 78% ~ 95%, y: 10% ~ 26%)
         val startX = (w * 0.78f).toInt().coerceIn(0, w - 1)
@@ -1357,8 +1376,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun checkSkipDialogInBitmap(bitmap: Bitmap): Boolean {
-        // 0. 마을 에픽 퀘스트 배너가 있거나 마을 화면이면 대화 스킵 버튼이 절대 아님! (햄버거 메뉴 오탐 100% 방지)
-        if (checkEpicBannerInBitmap(bitmap) || checkQuestAuraInBitmap(bitmap) || checkTownScreenInBitmap(bitmap)) {
+        // 0. 마을 화면이면 대화 스킵 버튼이 절대 아님! (햄버거 메뉴 오탐 방지)
+        if (checkTownScreenInBitmap(bitmap)) {
             return false
         }
 
@@ -1563,9 +1582,6 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun isBlackTransitionScreen(bitmap: Bitmap): Boolean {
-        // 대화 건너뛰기(✕)가 화면에 있으면 절대 방 이동 암전이 아님! (대화 스킵 최우선)
-        if (checkSkipDialogInBitmap(bitmap)) return false
-
         val w = bitmap.width
         val h = bitmap.height
         var darkCount = 0
@@ -1602,14 +1618,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun checkDungeonMiniMapInBitmap(bitmap: Bitmap): Boolean {
-        // 1. 대화 건너뛰기(✕)가 화면에 떠 있으면 100% 대화창/컷씬이므로 절대 미니맵 전투 상태 아님!
-        if (checkSkipDialogInBitmap(bitmap)) return false
-
-        // 2. 던전 클리어 메뉴나 던전 선택창이면 절대 미니맵 아님!
-        if (checkRetryButtonInBitmap(bitmap)) return false
-        if (checkDungeonSelectScreenInBitmap(bitmap)) return false
-
-        // 3. 마을 화면(원형 레이더/지구본 아이콘)이면 던전 아님!
+        // 마을 화면(원형 레이더/지구본 아이콘)이면 던전 아님!
         if (checkTownScreenInBitmap(bitmap)) return false
 
         val w = bitmap.width

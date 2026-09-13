@@ -303,3 +303,23 @@
      - `if (checkDungeonMiniMapInBitmap(bitmap)) return false`를 선두에 두어 던전 미니맵이 있으면 에픽 배너 판정을 원천 차단.
      - 황금색 픽셀 임계값을 기존 `> 60`에서 실제 3줄 텍스트 크기인 `> 400` 이상으로 대폭 상향.
   4. **스탑 진단(D 버튼) 평가 순서 동기화**: `diagnoseCurrentScreenState`에서도 던전 전투가 에픽 퀘스트보다 먼저 평가되도록 수정.
+
+---
+
+## 24. 미니맵/스킵/에픽배너 간 상호 재귀 호출로 인한 StackOverflowError 크래시 및 접근성 권한 해제 수정
+* **증상**: 앱이 즉시 크래시(Crash)나서 뻗어버리고, 이미 활성화되어 있던 접근성(Accessibility) 권한이 안드로이드 OS에 의해 강제 비활성화되어 앱을 켤 때마다 다시 접근성 권한을 켜라고 요구하던 문제.
+* **원인 (치명적 실수)**:
+  - **상호 무한 순환 재귀 (Circular Mutual Recursion)** 발생:
+    1. `checkEpicBannerInBitmap`이 `checkDungeonMiniMapInBitmap`을 호출.
+    2. `checkDungeonMiniMapInBitmap`이 `checkSkipDialogInBitmap`을 호출.
+    3. `checkSkipDialogInBitmap`이 `checkEpicBannerInBitmap`을 호출.
+    - 위 3개 함수가 꼬리를 물고 무한 호출되어 JVM 콜스택이 폭발, `java.lang.StackOverflowError`가 발생하여 접근성 서비스 프로세스가 즉사함.
+    - 안드로이드 OS의 `AccessibilityManagerService`는 접근성 서비스 프로세스가 Uncaught Exception으로 비정상 종료되면 시스템 보호를 위해 해당 서비스를 시스템에서 자동 해제/언바인드 처리함.
+* **해결 조치**:
+  1. **완전한 비순환 단방향 구조(Leaf & Level-1 DAG)로 전면 개편**:
+     - `checkEpicBannerInBitmap`: `checkDungeonMiniMapInBitmap` 호출을 전면 삭제. 대신 자체적으로 마을 목재 현판 픽셀(`woodPts > 2000`) 및 `checkTownScreenInBitmap`만 직접 검사하여 순환 원천 차단.
+     - `checkSkipDialogInBitmap`: `checkEpicBannerInBitmap` 및 `checkQuestAuraInBitmap` 호출 전면 삭제. 자체적인 하단 대화창 딤드 영역(`darkRatio >= 0.40f`) 및 햄버거 메뉴 목재 배제 로직으로 판정.
+     - `checkDungeonMiniMapInBitmap`: `checkSkipDialogInBitmap`, `checkRetryButtonInBitmap`, `checkDungeonSelectScreenInBitmap` 호출 전면 삭제. 자체적인 미니맵 다크 박스 및 전투 컨트롤 존재 여부로만 독립 판정.
+     - `isBlackTransitionScreen`: `checkSkipDialogInBitmap` 호출 제거하여 순수 암전 픽셀 검사로 단순화.
+  2. **시스템 접근성 서비스 재등록 및 자동 바인딩 복원**:
+     - ADB 명령어로 `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES`에 `AutoClickAccessibilityService`를 안전하게 갱신하고 재연결 완료 (`AccessibilityService connected`).
