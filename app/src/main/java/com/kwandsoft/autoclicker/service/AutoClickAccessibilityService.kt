@@ -15,6 +15,8 @@ import android.view.accessibility.AccessibilityEvent
 import com.kwandsoft.autoclicker.model.ButtonSlot
 import com.kwandsoft.autoclicker.model.ClickPoint
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
@@ -80,6 +82,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
         isRunning.set(true)
         runningSlotId = slotId
+        isInDungeonState.set(false)
+        growthState = GrowthState.TOWN_IDLE
         onStatusChange?.invoke(true, slotId)
 
         val displayMetrics = resources.displayMetrics
@@ -100,11 +104,14 @@ class AutoClickAccessibilityService : AccessibilityService() {
         // 캐릭키움 모드: 던전 내부일 때 공격 꾹 누르기 지속 (마을에서는 퀘스트/대화 이동 대기)
         executionJob = serviceScope.launch {
             try {
+                var moveDirectionIndex = 0
                 while (isActive && isRunning.get()) {
-                    if (isGrowthModeEnabled.get() && !isInDungeonState.get()) {
-                        // 마을 상태에서는 🎯 공격 누르기를 하지 않고 대기 (모니터가 퀘스트/대화 처리)
-                        delay(300L)
-                        continue
+                    if (isGrowthModeEnabled.get()) {
+                        // 던전 전투 중이 아니거나 대화 스킵/팝업 처리 중일 때는 공격 홀드 정지 (마을/던전선택 오클릭 원천 차단)
+                        if (!isInDungeonState.get() || growthState == GrowthState.DIALOG_PROGRESS) {
+                            delay(100L)
+                            continue
+                        }
                     }
 
                     val targetX = if (targetPoint.rawX > 0f) {
@@ -120,12 +127,14 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
                     Log.d(TAG, "Starting continuous hold for $holdDurationMs ms at ($targetX, $targetY)")
 
-                    val path = Path().apply { moveTo(targetX, targetY) }
-                    val stroke = GestureDescription.StrokeDescription(path, 0L, holdDurationMs)
-                    val gesture = GestureDescription.Builder().addStroke(stroke).build()
-
                     isHoldingAttack.set(true)
                     try {
+                        val path = Path().apply {
+                            moveTo(targetX, targetY)
+                            lineTo(targetX + 1f, targetY + 1f)
+                        }
+                        val stroke = GestureDescription.StrokeDescription(path, 0L, holdDurationMs)
+                        val gesture = GestureDescription.Builder().addStroke(stroke).build()
                         dispatchGestureSuspendResult(gesture)
                     } finally {
                         isHoldingAttack.set(false)
@@ -133,16 +142,29 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
                     if (!isActive || !isRunning.get()) break
 
-                    // 던전 전투 상황(일반방/보스방)일 때: 
-                    // 공격 홀드가 온전히 끝났으므로 순환 목록에서 스킬 1개를 탕! 시전하고 다음 홀드로 복귀
+                    // 던전 전투 상황일 때: 
+                    // 공격 홀드가 끝났으므로 순환 목록에서 스킬 1개를 시전하고, 다음 방 전진 이동(멍때림 완전 방지)
                     if (isGrowthModeEnabled.get() && isInDungeonState.get()) {
                         val (sx, sy) = combatSkills[nextSkillIndex % combatSkills.size]
                         nextSkillIndex = (nextSkillIndex + 1) % combatSkills.size
                         tapSingle(screenW * sx, screenH * sy, 40L)
                         delay(60L)
+
+                        // 조이스틱(x: 17%, y: 72%)에서 우측(방향 교차)으로 전진 드래그 (방 이동 및 문턱 걸림 방지)
+                        val joyCenterX = screenW * 0.170f
+                        val joyCenterY = screenH * 0.720f
+                        val (targetJoyX, targetJoyY) = when (moveDirectionIndex % 4) {
+                            1 -> Pair(screenW * 0.310f, screenH * 0.650f) // 우상단
+                            3 -> Pair(screenW * 0.310f, screenH * 0.790f) // 우하단
+                            else -> Pair(screenW * 0.320f, screenH * 0.720f) // 직진 우측
+                        }
+                        moveDirectionIndex++
+
+                        swipeSingle(joyCenterX, joyCenterY, targetJoyX, targetJoyY, 700L)
+                        delay(60L)
                     }
 
-                    if (delayAfterMs > 0) {
+                    if (delayAfterMs > 0 && !isGrowthModeEnabled.get()) {
                         delay(delayAfterMs)
                     } else {
                         delay(50L)
@@ -165,25 +187,22 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
 
 
-    // 던전 전투 시 순환 시전할 주요 스킬 위치 목록 (비율 x, y)
+    // 던전 전투 시 시전할 스킬 위치 목록 (기본 공격 🎯의 좌측 및 좌상단 원형 스킬들만 집중 타격, 우측 점프/회피 제외)
     private val combatSkills = listOf(
-        Pair(0.705f, 0.895f), // 최하단 우 (주력기)
-        Pair(0.645f, 0.895f), // 최하단 중
-        Pair(0.585f, 0.745f), // 하단 좌
-        Pair(0.645f, 0.745f), // 하단 중
-        Pair(0.705f, 0.745f), // 하단 우
-        Pair(0.690f, 0.590f), // 중단 좌
-        Pair(0.755f, 0.590f), // 중단 우
-        Pair(0.695f, 0.440f), // 상단 좌
-        Pair(0.750f, 0.440f), // 상단 중
-        Pair(0.805f, 0.440f), // 상단 우
-        Pair(0.865f, 0.440f)  // 각성기
+        Pair(0.710f, 0.890f), // 하단 1 (공격 바로 좌측)
+        Pair(0.650f, 0.890f), // 하단 2
+        Pair(0.585f, 0.890f), // 하단 3
+        Pair(0.710f, 0.740f), // 중단 1 (공격 좌상단)
+        Pair(0.650f, 0.740f), // 중단 2
+        Pair(0.585f, 0.740f), // 중단 3
+        Pair(0.760f, 0.590f), // 상단 1 (공격 바로 위)
+        Pair(0.690f, 0.590f)  // 상단 2
     )
     private var nextSkillIndex = 0
 
     private var lastEntranceTriggerTime = 0L
     private var lastPotionTime = 0L
-    private val isGrowthModeEnabled = AtomicBoolean(false)
+    private val isGrowthModeEnabled = AtomicBoolean(true)
     private val isInDungeonState = AtomicBoolean(false)
     private val isHoldingAttack = AtomicBoolean(false)
     private var currentActiveSlot: ButtonSlot? = null
@@ -192,11 +211,14 @@ class AutoClickAccessibilityService : AccessibilityService() {
     fun setGrowthMode(enabled: Boolean) {
         isGrowthModeEnabled.set(enabled)
         Log.d(TAG, "🌱 캐릭키움 모드 상태 변경: $enabled")
+        growthState = GrowthState.TOWN_IDLE
+        townMoveStartTime = 0L
+        lastDialogActionTime = 0L
         if (!enabled) {
             // 캐릭키움 꺼지면 모니터 작업 즉시 중단 (일반 모드 100% 순수 홀드 보장)
             monitorJob?.cancel()
             monitorJob = null
-        } else if (isRunning.get() && monitorJob == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        } else if (isRunning.get() && (monitorJob == null || monitorJob?.isActive != true) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val slot = currentActiveSlot
             val point = currentActivePoint
             if (slot != null && point != null) {
@@ -220,15 +242,30 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in real-time monitor", e)
                 }
-                delay(300L) // 0.3초 주기 실시간 감지
+                delay(80L) // 0.08초 주기 초고속 실시간 감지
             }
         }
     }
 
     fun isGrowthMode(): Boolean = isGrowthModeEnabled.get()
 
+    enum class GrowthState {
+        TOWN_IDLE,        // 마을 대기: 퀘스트/안내손가락 클릭 가능
+        TOWN_MOVING,      // 이동 중: 퀘스트 재클릭 절대 금지! 대화/팝업/입장 나올 때까지 100% 대기
+        DIALOG_PROGRESS,  // 대화/팝업 처리 중: [건너뛰기], [보고], [수락], [확인] 순차 처리
+        DUNGEON_COMBAT,   // 던전 전투: 공격 꾹 누르기 + 스킬 + 방 이동
+        DUNGEON_CLEAR     // 던전 클리어: 보상 획득 + 다음 퀘스트 클릭
+    }
+
+    private var growthState = GrowthState.TOWN_IDLE
+    private var townMoveStartTime = 0L
+    private var lastDialogActionTime = 0L
     private var lastGrowthActionTime = 0L
     private var lastTownQuestTime = 0L
+    private var lastClearQuestClickTime = 0L
+    private var lastMapCardClickTime = 0L
+    private var lastEpicQuestClickTime = 0L
+    private var hasHeldForClearLoot = false
 
     private val isDispatching = AtomicBoolean(false)
 
@@ -241,156 +278,213 @@ class AutoClickAccessibilityService : AccessibilityService() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         try {
             val bitmap = captureScreenshotSuspend() ?: return
-            
-            // 1. 화면이 마을인지 던전인지 엄격히 판별
-            val isTown = checkTownScreenInBitmap(bitmap)
+            val now = System.currentTimeMillis()
 
-            // 던전 내부 판별 (마을이 아니고 + 미니맵 핀이나 보스가 있을 때)
-            val inDungeon = !isTown && (checkDungeonEntranceInBitmap(bitmap) || checkBossDevilInBitmap(bitmap) || checkMiniMapPinInBitmap(bitmap))
-            isInDungeonState.set(inDungeon)
-
-            // 던전 내부(inDungeon)일 때만 포션/힐 사용! (마을 오터치 완전 차단)
-            if (inDungeon) {
-                checkAndHandleLowHp(bitmap, screenW, screenH)
+            // 0순위: 장비 획득 [장착] 팝업 (어떤 상태에서든 즉시 0순위로 장착 터치)
+            val isEquipPopup = checkEquipPopupInBitmap(bitmap)
+            if (isEquipPopup) {
+                bitmap.recycle()
+                if (now - lastGrowthActionTime > 200L) {
+                    lastGrowthActionTime = now
+                    Log.d(TAG, "🛡️ [0순위: 장비 장착] [장착] 버튼 클릭")
+                    tapSingle(screenW * 0.905f, screenH * 0.680f, 50L)
+                }
+                return
             }
 
-            // [우선순위 상태 감지]
-            // 1. 던전 내부 아이템 줍기 (던전일 때만)
-            val isPickupHand = if (inDungeon) checkItemPickupInBitmap(bitmap) else false
-            // 2. 던전 클리어 메뉴 (보스 클리어 후)
-            val isRetryVisible = if (!isPickupHand && !isTown) checkRetryButtonInBitmap(bitmap) else false
-            // 3. 던전 초입
-            val isEntrance = if (inDungeon && !isPickupHand && !isRetryVisible) checkDungeonEntranceInBitmap(bitmap) else false
-
-            // [캐릭키움 모드 전용 상태 감지]
-            // 대화 스킵 (마을/던전 공통)
-            val isSkipDialog = if (isGrowthModeEnabled.get() && !isPickupHand) checkSkipDialogInBitmap(bitmap) else false
-            // 완료 확인 팝업
-            val isConfirmPopup = if (isGrowthModeEnabled.get() && !isPickupHand && !isSkipDialog) checkConfirmPopupInBitmap(bitmap) else false
-            // 퀘스트 선택 / 보고 팝업 ([보고], [수락])
-            val isQuestSelectPopup = if (isGrowthModeEnabled.get() && !isPickupHand && !isSkipDialog && !isConfirmPopup) checkQuestSelectPopupInBitmap(bitmap) else false
-            // 던전 입장 / 전투시작 버튼 ([입장])
-            val isBattleStart = if (isGrowthModeEnabled.get() && !isPickupHand && !isSkipDialog && !isConfirmPopup && !isQuestSelectPopup) checkBattleStartInBitmap(bitmap) else false
-            // 마을 퀘스트 1순위: 마을 상태(isTown)이고 대화/확인/퀘스트팝업/전투시작 팝업이 없을 때 아우라 감지 시 즉시 터치!
-            val isQuestAvailable = if (isGrowthModeEnabled.get() && isTown && !isSkipDialog && !isConfirmPopup && !isQuestSelectPopup && !isBattleStart) checkQuestAuraInBitmap(bitmap) else false
-            
-            if (isPickupHand) {
+            // 1순위: 가이드 손가락 / 노란 원형 링 안내 (👆) (튜토리얼/안내 최우선 돌파)
+            val pointingTip = checkPointingGuideInBitmap(bitmap)
+            if (pointingTip != null) {
                 bitmap.recycle()
-                Log.d(TAG, "🖐️ [아이템 줍기 손모양] 감지됨! 줍기 2회 탭 실행")
-                val pickupX = screenW * 0.825f
-                val pickupY = screenH * 0.825f
-
-                isDispatching.set(true)
-                try {
-                    for (i in 1..2) {
-                        if (!isRunning.get()) break
-                        val tapPath = Path().apply { moveTo(pickupX, pickupY) }
-                        val tapStroke = GestureDescription.StrokeDescription(tapPath, 0L, 40L)
-                        val tapGesture = GestureDescription.Builder().addStroke(tapStroke).build()
-                        dispatchGestureSuspendResult(tapGesture)
-
-                        if (!isRunning.get()) break
-                        delay(120L)
-                    }
-                } finally {
-                    isDispatching.set(false)
-                }
-            } else if (isSkipDialog) {
-                bitmap.recycle()
-                val now = System.currentTimeMillis()
-                if (now - lastGrowthActionTime > 800L) {
+                growthState = GrowthState.DIALOG_PROGRESS
+                lastDialogActionTime = now
+                if (now - lastGrowthActionTime > 200L) {
                     lastGrowthActionTime = now
-                    Log.d(TAG, "🌱 [캐릭키움] 건너뛰기 ✕ 감지! 대화 스킵 클릭")
-                    val skipX = screenW * 0.920f
-                    val skipY = screenH * 0.055f
+                    val (gx, gy) = pointingTip
+                    Log.d(TAG, "👆 [1순위: 안내 손가락/원형 링] 안내 위치 클릭 ($gx, $gy)")
+                    tapSingle(gx, gy, 50L)
+                }
+                return
+            }
+
+            // 2순위: 대화 스킵 (✕) (건너뛰기)
+            val isSkipDialog = checkSkipDialogInBitmap(bitmap)
+            if (isSkipDialog) {
+                bitmap.recycle()
+                growthState = GrowthState.DIALOG_PROGRESS
+                lastDialogActionTime = now
+                if (now - lastGrowthActionTime > 200L) {
+                    lastGrowthActionTime = now
+                    Log.d(TAG, "🌱 [2순위: 대화 스킵] 건너뛰기 ✕ 클릭")
+                    val skipX = screenW * 0.915f
+                    val skipY = screenH * 0.060f
                     tapSingle(skipX, skipY, 50L)
                 }
-            } else if (isConfirmPopup) {
+                return
+            }
+
+            // 3순위: 완료/확인/이동 팝업 (화면 중앙 모달)
+            val isConfirmPopup = checkConfirmPopupInBitmap(bitmap)
+            if (isConfirmPopup) {
                 bitmap.recycle()
-                val now = System.currentTimeMillis()
-                if (now - lastGrowthActionTime > 1200L) {
+                growthState = GrowthState.DIALOG_PROGRESS
+                lastDialogActionTime = now
+                if (now - lastGrowthActionTime > 200L) {
                     lastGrowthActionTime = now
-                    Log.d(TAG, "🌱 [캐릭키움] 중앙 완료/확인/이동 팝업 감지! 확인/이동(56%) 클릭")
+                    Log.d(TAG, "🌱 [3순위: 완료/확인/이동 팝업] 중앙 확인(56%) 클릭")
                     val confX = screenW * 0.560f
                     val confY = screenH * 0.630f
                     tapSingle(confX, confY, 50L)
                 }
-            } else if (isQuestSelectPopup) {
+                return
+            }
+
+            // 4순위: NPC 퀘스트 선택 / [보고]/[수락] (목록 최상단 에픽 퀘스트)
+            val isQuestSelectPopup = checkQuestSelectPopupInBitmap(bitmap)
+            if (isQuestSelectPopup) {
                 bitmap.recycle()
-                val now = System.currentTimeMillis()
-                if (now - lastGrowthActionTime > 1200L) {
+                growthState = GrowthState.DIALOG_PROGRESS
+                lastDialogActionTime = now
+                if (now - lastGrowthActionTime > 200L) {
                     lastGrowthActionTime = now
-                    Log.d(TAG, "🌱 [캐릭키움] NPC 퀘스트 선택/보고 팝업 감지! 최상단 에픽 [보고/수락] 버튼 클릭")
+                    Log.d(TAG, "🌱 [4순위: NPC 퀘스트] 최상단 에픽 [보고/수락] 버튼 클릭")
                     val bogoX = screenW * 0.655f
                     val bogoY = screenH * 0.355f
                     tapSingle(bogoX, bogoY, 50L)
                 }
-            } else if (isBattleStart) {
-                bitmap.recycle()
-                val now = System.currentTimeMillis()
-                if (now - lastGrowthActionTime > 1200L) {
-                    lastGrowthActionTime = now
-                    Log.d(TAG, "🌱 [캐릭키움] 던전 [입장/전투시작] 버튼 감지! 클릭")
-                    val batX = screenW * 0.790f
-                    val batY = screenH * 0.912f
-                    tapSingle(batX, batY, 60L)
-                }
-            } else if (isQuestAvailable) {
-                bitmap.recycle()
-                val now = System.currentTimeMillis()
-                // 퀘스트 1회 터치 후 4.0초간 재클릭 방지하고 대기
-                if (now - lastTownQuestTime > 4000L) {
-                    lastTownQuestTime = now
-                    Log.d(TAG, "🌱 [캐릭키움 1순위] 우상단 최상단 퀘스트(노란 아우라 박스) 1회 클릭 후 이동 대기")
-                    val questX = screenW * 0.826f
-                    val questY = screenH * 0.202f
-                    tapSingle(questX, questY, 60L)
-                }
-            } else if (isRetryVisible) {
-                bitmap.recycle()
-                val now = System.currentTimeMillis()
-                Log.d(TAG, "🎯 [던전 재도전하기/클리어 메뉴] 감지됨!")
-                if (isGrowthModeEnabled.get() && now - lastGrowthActionTime > 2500L) {
-                    lastGrowthActionTime = now
-                    // 던전 클리어 시 우상단에 뜬 [에픽 다음 던전] 퀘스트 버튼 우선 터치
-                    Log.d(TAG, "🌱 [캐릭키움] 던전 클리어 메뉴에서 다음 에픽 퀘스트(2652, 201) 클릭")
-                    val nextQuestX = screenW * 0.850f
-                    val nextQuestY = screenH * 0.140f
-                    tapSingle(nextQuestX, nextQuestY, 50L)
-                }
-            } else if (isEntrance) {
-                bitmap.recycle()
-                val now = System.currentTimeMillis()
-                if (now - lastEntranceTriggerTime > 30000L) {
-                    lastEntranceTriggerTime = now
-                    Log.d(TAG, "🚩 [던전 초입(첫 방)] 감지됨! 멍때림 방지 3회 탭 시작")
+                return
+            }
 
-                    val targetX = if (targetPoint.rawX > 0f) {
-                        targetPoint.rawX.coerceIn(10f, screenW - 10f)
-                    } else {
-                        (targetPoint.xRatio * screenW).coerceIn(10f, screenW - 10f)
-                    }
-                    val targetY = if (targetPoint.rawY > 0f) {
-                        targetPoint.rawY.coerceIn(10f, screenH - 10f)
-                    } else {
-                        (targetPoint.yRatio * screenH).coerceIn(10f, screenH - 10f)
-                    }
-
-                    for (i in 1..3) {
-                        if (!isRunning.get()) break
-                        Log.d(TAG, "Entrance wake-up tap $i/3 at ($targetX, $targetY)")
-                        val tapPath = Path().apply { moveTo(targetX, targetY) }
-                        val tapStroke = GestureDescription.StrokeDescription(tapPath, 0L, 50L)
-                        val tapGesture = GestureDescription.Builder().addStroke(tapStroke).build()
-                        dispatchGestureSuspendResult(tapGesture)
-
-                        if (!isRunning.get()) break
-                        delay(200L)
-                    }
-                    Log.d(TAG, "Entrance wake-up finished. Continuing slot execution...")
-                }
-            } else {
+            // 5순위: 던전 클리어 메뉴 (보스 처치 후 우측 세로 패널: 마을로 가기, 다음 퀘스트 등)
+            val isDungeonClear = checkRetryButtonInBitmap(bitmap)
+            if (isDungeonClear) {
                 bitmap.recycle()
+                growthState = GrowthState.DUNGEON_CLEAR
+                isInDungeonState.set(false) // 전투 즉시 중단 및 홀드 차단
+
+                if (now - lastClearQuestClickTime > 400L) {
+                    lastClearQuestClickTime = now
+                    Log.d(TAG, "🌱 [5순위: 던전 클리어] 최상단 다음 에픽 퀘스트(18.3%) 즉시 클릭")
+                    val nextQuestX = screenW * 0.865f
+                    val nextQuestY = screenH * 0.183f
+                    tapSingle(nextQuestX, nextQuestY, 60L)
+                }
+                return
+            }
+
+            // 6순위: 던전 내부 전투 중 (우상단 반투명 미니맵 검출)
+            val rawMiniMapDarkRatio = run {
+                val mw = bitmap.width; val mh = bitmap.height
+                val sx = (mw * 0.84f).toInt(); val ex = (mw * 0.97f).toInt()
+                val sy = (mh * 0.03f).toInt(); val ey = (mh * 0.22f).toInt()
+                var dark = 0; var tot = 0
+                for (y in sy until ey step 4) {
+                    for (x in sx until ex step 4) {
+                        tot++
+                        val p = bitmap.getPixel(x, y)
+                        if (Color.red(p) < 65 && Color.green(p) < 65 && Color.blue(p) < 65) dark++
+                    }
+                }
+                if (tot > 0) dark.toFloat() / tot else 0f
+            }
+            val inDungeon = rawMiniMapDarkRatio > 0.35f
+            isInDungeonState.set(inDungeon)
+
+            if (inDungeon) {
+                growthState = GrowthState.DUNGEON_COMBAT
+                val isPickupHand = checkItemPickupInBitmap(bitmap)
+                val isEntrance = checkDungeonEntranceInBitmap(bitmap)
+
+                if (isPickupHand) {
+                    bitmap.recycle()
+                    Log.d(TAG, "🖐️ [6-1순위: 아이템 줍기] 손모양 감지됨! 줍기 탭")
+                    val pickupX = screenW * 0.825f
+                    val pickupY = screenH * 0.825f
+                    tapSingle(pickupX, pickupY, 40L)
+                    return
+                } else if (isEntrance) {
+                    bitmap.recycle()
+                    if (now - lastEntranceTriggerTime > 30000L) {
+                        lastEntranceTriggerTime = now
+                        Log.d(TAG, "🚩 [6-2순위: 던전 초입] 첫 방 감지됨! 멍때림 방지 3회 탭")
+                        val targetX = if (targetPoint.rawX > 0f) targetPoint.rawX.coerceIn(10f, screenW - 10f) else (targetPoint.xRatio * screenW).coerceIn(10f, screenW - 10f)
+                        val targetY = if (targetPoint.rawY > 0f) targetPoint.rawY.coerceIn(10f, screenH - 10f) else (targetPoint.yRatio * screenH).coerceIn(10f, screenH - 10f)
+                        for (i in 1..3) {
+                            if (!isRunning.get()) break
+                            tapSingle(targetX, targetY, 50L)
+                            if (!isRunning.get()) break
+                            delay(100L)
+                        }
+                    }
+                    return
+                }
+                bitmap.recycle()
+                return // 던전 전투 중에는 화면 헛클릭 일체 금지 (공격 5초 꾹 누르기 온전히 보장)
+            }
+
+            // 7순위: 우상단 [에픽] 퀘스트 배너 (마을 길찾기 / 던전선택 자동지정 / 다음 퀘스트 진행)
+            // 마을이나 던전선택, 대기 상태에서 [에픽]이 화면에 보이면 무조건 최우선 터치!
+            val hasEpicQuest = checkEpicBannerInBitmap(bitmap) || checkQuestAuraInBitmap(bitmap)
+            if (hasEpicQuest) {
+                bitmap.recycle()
+                if (now - lastEpicQuestClickTime > 1500L) {
+                    lastEpicQuestClickTime = now
+                    growthState = GrowthState.DIALOG_PROGRESS
+                    lastDialogActionTime = now
+                    Log.d(TAG, "⭐ [7순위: 우상단 에픽 퀘스트] 최우선 터치! (86.5%, 18.3%)")
+                    val epicX = screenW * 0.865f
+                    val epicY = screenH * 0.183f
+                    tapSingle(epicX, epicY, 50L)
+                }
+                return // 에픽 퀘스트가 떠 있는 동안에는 하위 순위(던전입장 등) 절대 터치 금지!
+            }
+
+            // 8순위: 던전 선택 화면 (에픽 배너가 없을 때 수동 선택 보조)
+            val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
+            if (isDungeonSelect) {
+                isInDungeonState.set(false)
+                val battleStartCoord = findBattleStartButtonInBitmap(bitmap)
+                if (battleStartCoord != null) {
+                    bitmap.recycle()
+                    growthState = GrowthState.DIALOG_PROGRESS
+                    lastDialogActionTime = now
+                    if (now - lastGrowthActionTime > 300L) {
+                        lastGrowthActionTime = now
+                        val (batX, batY) = battleStartCoord
+                        Log.d(TAG, "🌱 [8순위: 던전 선택] [입장/전투시작] 버튼 감지! ($batX, $batY) 클릭")
+                        tapSingle(batX, batY, 50L)
+                    }
+                    return
+                }
+
+                // 깜박이는 맵 카드 감지 시 터치
+                if (now - lastMapCardClickTime > 2000L) {
+                    val targetMapCard = findQuestMapCardInBitmap(bitmap)
+                    if (targetMapCard != null) {
+                        bitmap.recycle()
+                        lastMapCardClickTime = now
+                        growthState = GrowthState.DIALOG_PROGRESS
+                        lastDialogActionTime = now
+                        val (mcX, mcY) = targetMapCard
+                        Log.d(TAG, "🗺️ [8순위: 던전 선택] 퀘스트 타겟 맵 카드 감지! ($mcX, $mcY) 클릭")
+                        tapSingle(mcX, mcY, 50L)
+                        return
+                    }
+                }
+                bitmap.recycle()
+                return
+            }
+
+            bitmap.recycle()
+
+            // 대화/팝업/던전클리어 종료 후 마을 대기(TOWN_IDLE) 전이
+            if (growthState == GrowthState.DIALOG_PROGRESS || growthState == GrowthState.DUNGEON_CLEAR) {
+                if (now - lastDialogActionTime > 600L) {
+                    Log.d(TAG, "🌿 [캐릭키움 상태전이] 대화/팝업 종료 확인 -> 마을 대기(TOWN_IDLE) 전이")
+                    growthState = GrowthState.TOWN_IDLE
+                    lastClearQuestClickTime = 0L
+                    hasHeldForClearLoot = false
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error checking screen state", e)
@@ -551,14 +645,15 @@ class AutoClickAccessibilityService : AccessibilityService() {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 마을 하단 메뉴바 [스케줄러, 상점, 캐릭터, 모험, 인벤토리] 영역 (x: 65% ~ 95%, y: 92% ~ 98%)
-        val startX = (w * 0.65f).toInt().coerceIn(0, w - 1)
-        val endX = (w * 0.95f).toInt().coerceIn(0, w)
-        val startY = (h * 0.92f).toInt().coerceIn(0, h - 1)
-        val endY = (h * 0.98f).toInt().coerceIn(0, h)
+        // 마을 우상단 미니맵 원형 지구본/레이더 버튼 (x: 95% ~ 98%, y: 2% ~ 7%)
+        // 던전에서는 일시정지 버튼(회색/갈색)이 위치하며, 파란색 구체 레이더는 오직 마을에만 존재함!
+        val startX = (w * 0.95f).toInt().coerceIn(0, w - 1)
+        val endX = (w * 0.98f).toInt().coerceIn(0, w)
+        val startY = (h * 0.02f).toInt().coerceIn(0, h - 1)
+        val endY = (h * 0.07f).toInt().coerceIn(0, h)
 
         var total = 0
-        var whiteText = 0
+        var bluePixels = 0
 
         for (y in startY until endY step 2) {
             for (x in startX until endX step 2) {
@@ -568,23 +663,50 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 val g = Color.green(p)
                 val b = Color.blue(p)
 
-                if (r > 180 && g > 180 && b > 180) {
-                    whiteText++
+                if (b > 140 && r < 60 && g in 50..130 && (b - r) > 80) {
+                    bluePixels++
                 }
             }
         }
 
         if (total == 0) return false
-        val ratio = whiteText.toFloat() / total.toFloat()
-        return ratio > 0.04f
+        val ratio = bluePixels.toFloat() / total.toFloat()
+        return ratio > 0.02f
+    }
+
+    private fun checkEpicBannerInBitmap(bitmap: Bitmap): Boolean {
+        val w = bitmap.width
+        val h = bitmap.height
+
+        // 우측 상단 퀘스트 패널 영역 (x: 78% ~ 95%, y: 10% ~ 26%)
+        val startX = (w * 0.78f).toInt().coerceIn(0, w - 1)
+        val endX = (w * 0.95f).toInt().coerceIn(0, w)
+        val startY = (h * 0.10f).toInt().coerceIn(0, h - 1)
+        val endY = (h * 0.26f).toInt().coerceIn(0, h)
+
+        var goldPixels = 0
+        for (y in startY until endY step 2) {
+            for (x in startX until endX step 2) {
+                val p = bitmap.getPixel(x, y)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+
+                // [에픽] 고유 황금/주황 텍스트
+                if (r > 170 && g in 100..190 && b < 80 && (r - b) > 70) {
+                    goldPixels++
+                }
+            }
+        }
+        return goldPixels > 60
     }
 
     private fun checkMiniMapPinInBitmap(bitmap: Bitmap): Boolean {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 미니맵 전체 영역 (x: 85% ~ 96%, y: 8% ~ 16%)
-        val startX = (w * 0.85f).toInt().coerceIn(0, w - 1)
+        // 우상단 거의 정사각형 모양의 던전 미니맵 영역 (x: 84% ~ 97%, y: 3% ~ 22%)
+        val startX = (w * 0.84f).toInt().coerceIn(0, w - 1)
         val endX = (w * 0.96f).toInt().coerceIn(0, w)
         val startY = (h * 0.08f).toInt().coerceIn(0, h - 1)
         val endY = (h * 0.16f).toInt().coerceIn(0, h)
@@ -608,7 +730,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
         if (total == 0) return false
         val ratio = blueMarkerPixels.toFloat() / total.toFloat()
-        return ratio > 0.005f
+        // 실제 미니맵 핀은 0.005 ~ 0.040 범위 (0.040 초과는 웨스트코스트 등 마을 푸른 하늘 오탐 방지)
+        return ratio in 0.005f..0.040f
     }
 
     private var lastPickupTime = 0L
@@ -662,37 +785,58 @@ class AutoClickAccessibilityService : AccessibilityService() {
     }
 
     private fun checkRetryButtonInBitmap(bitmap: Bitmap): Boolean {
+        // 0. 던전 선택 화면이면 절대 던전 클리어 메뉴가 아님!
+        if (checkDungeonSelectScreenInBitmap(bitmap)) return false
+
         val w = bitmap.width
         val h = bitmap.height
 
-        // 던전 클리어 시 우측 메뉴 패널 (x: 78% ~ 95%, y: 20% ~ 45%)
+        // 1) 던전 클리어 시 우측 메뉴 패널의 [마을로 가기] 고유 파란색 텍스트 (x: 78% ~ 94%, y: 44% ~ 53%)
         val startX = (w * 0.78f).toInt().coerceIn(0, w - 1)
-        val endX = (w * 0.95f).toInt().coerceIn(0, w)
-        val startY = (h * 0.20f).toInt().coerceIn(0, h - 1)
-        val endY = (h * 0.45f).toInt().coerceIn(0, h)
+        val endX = (w * 0.94f).toInt().coerceIn(0, w)
+        val startY = (h * 0.44f).toInt().coerceIn(0, h - 1)
+        val endY = (h * 0.53f).toInt().coerceIn(0, h)
 
-        var totalSampled = 0
-        var darkBgPixels = 0
-
-        for (y in startY until endY step 3) {
-            for (x in startX until endX step 3) {
-                totalSampled++
+        var bluePixels = 0
+        for (y in startY until endY step 2) {
+            for (x in startX until endX step 2) {
                 val pixel = bitmap.getPixel(x, y)
                 val r = Color.red(pixel)
                 val g = Color.green(pixel)
                 val b = Color.blue(pixel)
 
-                // 클리어 메뉴 패널 고유의 짙은 흑갈색 배경 (R < 60, G < 50, B < 45)
-                if (r < 60 && g < 50 && b < 45) {
-                    darkBgPixels++
+                // [마을로 가기] 하늘색/파란색 텍스트
+                if (b > 110 && (b - r) > 30 && (b - g) > 10) {
+                    bluePixels++
                 }
             }
         }
+        val hasBlueTown = bluePixels > 100
 
-        if (totalSampled == 0) return false
-        val bgRatio = darkBgPixels.toFloat() / totalSampled.toFloat()
-        // 클리어 메뉴 패널이 화면에 떠 있으면 짙은 배경 비율이 60% 이상임!
-        return bgRatio > 0.60f
+        // 2) 던전 클리어 메뉴 최상단 [에픽] 황금색 퀘스트 버튼 (x: 78% ~ 92%, y: 12% ~ 22%)
+        val qStartX = (w * 0.78f).toInt().coerceIn(0, w - 1)
+        val qEndX = (w * 0.92f).toInt().coerceIn(0, w)
+        val qStartY = (h * 0.12f).toInt().coerceIn(0, h - 1)
+        val qEndY = (h * 0.22f).toInt().coerceIn(0, h)
+
+        var goldPixels = 0
+        for (y in qStartY until qEndY step 2) {
+            for (x in qStartX until qEndX step 2) {
+                val pixel = bitmap.getPixel(x, y)
+                val r = Color.red(pixel)
+                val g = Color.green(pixel)
+                val b = Color.blue(pixel)
+
+                // 황금색/노란색 퀘스트 텍스트
+                if (r > 160 && g > 110 && b < 85 && (r - b) > 60) {
+                    goldPixels++
+                }
+            }
+        }
+        val hasGoldQuest = goldPixels > 150
+
+        // 던전 클리어 메뉴에서는 파란색 [마을로 가기]와 황금색 [에픽]이 함께 존재함
+        return hasBlueTown && hasGoldQuest
     }
 
     private suspend fun tapSingle(x: Float, y: Float, durationMs: Long = 50L) {
@@ -707,39 +851,205 @@ class AutoClickAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun checkSkipDialogInBitmap(bitmap: Bitmap): Boolean {
+    private suspend fun holdSingle(x: Float, y: Float, durationMs: Long = 5000L) {
+        isDispatching.set(true)
+        try {
+            val path = Path().apply {
+                moveTo(x, y)
+                lineTo(x + 1f, y + 1f)
+            }
+            val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            dispatchGestureSuspendResult(gesture)
+        } finally {
+            isDispatching.set(false)
+        }
+    }
+
+    private suspend fun swipeSingle(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long = 500L) {
+        isDispatching.set(true)
+        try {
+            val path = Path().apply {
+                moveTo(startX, startY)
+                lineTo(endX, endY)
+            }
+            val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            dispatchGestureSuspendResult(gesture)
+        } finally {
+            isDispatching.set(false)
+        }
+    }
+
+    private fun checkPointingGuideInBitmap(bitmap: Bitmap): Pair<Float, Float>? {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 1. 하단 대화창(짙은 흑갈색 배경 박스) 존재 여부 필수 확인 (x: 20% ~ 80%, y: 75% ~ 90%)
-        val dialogStartX = (w * 0.20f).toInt().coerceIn(0, w - 1)
-        val dialogEndX = (w * 0.80f).toInt().coerceIn(0, w)
-        val dialogStartY = (h * 0.75f).toInt().coerceIn(0, h - 1)
-        val dialogEndY = (h * 0.90f).toInt().coerceIn(0, h)
+        val startX = (w * 0.12f).toInt()
+        val endX = (w * 0.95f).toInt()
+        val startY = (h * 0.06f).toInt()
+        val endY = (h * 0.94f).toInt()
 
-        var dialogTotal = 0
-        var darkDialogPixels = 0
+        val cellSize = 40
+        val cols = (endX - startX) / cellSize + 1
+        val rows = (endY - startY) / cellSize + 1
+        val grid = IntArray(cols * rows)
 
-        for (y in dialogStartY until dialogEndY step 3) {
-            for (x in dialogStartX until dialogEndX step 3) {
-                dialogTotal++
+        for (y in startY until endY step 4) {
+            val gy = (y - startY) / cellSize
+            for (x in startX until endX step 4) {
                 val p = bitmap.getPixel(x, y)
-                if (Color.red(p) < 45 && Color.green(p) < 40 && Color.blue(p) < 35) {
-                    darkDialogPixels++
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+
+                // 손가락 특유의 밝은 아이보리/연노랑 (R: 235~255, G: 210~255, B: 120~210, R-B: 30~105, |R-G| <= 35)
+                if (r >= 235 && g >= 210 && b in 120..210 && (r - b) in 30..105 && kotlin.math.abs(r - g) <= 35) {
+                    val gx = (x - startX) / cellSize
+                    grid[gy * cols + gx]++
                 }
             }
         }
 
-        if (dialogTotal == 0) return false
-        val darkDialogRatio = darkDialogPixels.toFloat() / dialogTotal.toFloat()
-        // 하단에 짙은 대화창이 50% 이상 없으면 마을/전투 화면이므로 건너뛰기 아님! (마을 우상단 햄버거 메뉴 오탐 100% 방지)
-        if (darkDialogRatio < 0.50f) return false
+        var bestCount = 0
+        var bestGx = -1
+        var bestGy = -1
 
-        // 2. 우상단 건너뛰기 ✕ 흰색 글자 확인 (x: 88% ~ 96%, y: 3% ~ 8%)
-        val startX = (w * 0.88f).toInt().coerceIn(0, w - 1)
-        val endX = (w * 0.96f).toInt().coerceIn(0, w)
+        for (gy in 1 until rows - 1) {
+            for (gx in 1 until cols - 1) {
+                var sum = 0
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        sum += grid[(gy + dy) * cols + (gx + dx)]
+                    }
+                }
+                if (sum > bestCount) {
+                    bestCount = sum
+                    bestGx = gx
+                    bestGy = gy
+                }
+            }
+        }
+
+        if (bestCount >= 380 && bestGx >= 0 && bestGy >= 0) {
+            val centerPixelX = startX + bestGx * cellSize + cellSize / 2
+            val centerPixelY = startY + bestGy * cellSize + cellSize / 2
+
+            // 채팅창/넓은 팝업 방지: 손가락 가로 폭 검사 (40px ~ 170px 사이여야 손가락임)
+            var maxWidth = 0
+            for (y in (centerPixelY - 60)..(centerPixelY + 60) step 10) {
+                if (y !in 0 until h) continue
+                var minSpanX = w
+                var maxSpanX = -1
+                for (x in (centerPixelX - 160)..(centerPixelX + 160) step 4) {
+                    if (x !in 0 until w) continue
+                    val p = bitmap.getPixel(x, y)
+                    val r = Color.red(p)
+                    val g = Color.green(p)
+                    val b = Color.blue(p)
+                    if (r >= 235 && g >= 210 && b in 120..210 && (r - b) in 30..105 && kotlin.math.abs(r - g) <= 35) {
+                        if (x < minSpanX) minSpanX = x
+                        if (x > maxSpanX) maxSpanX = x
+                    }
+                }
+                if (maxSpanX >= minSpanX) {
+                    val spanW = maxSpanX - minSpanX
+                    if (spanW > maxWidth) maxWidth = spanW
+                }
+            }
+
+            if (maxWidth !in 35..180) {
+                return null // 채팅창이나 넓은 팝업 박스 제외
+            }
+
+            // 손가락 끝(검지 tip) 위치 계산
+            var minY = h
+            val scanMinX = (centerPixelX - 100).coerceIn(0, w - 1)
+            val scanMaxX = (centerPixelX + 100).coerceIn(0, w - 1)
+            val scanMinY = (centerPixelY - 180).coerceIn(0, h - 1)
+            val scanMaxY = (centerPixelY + 150).coerceIn(0, h - 1)
+
+            for (y in scanMinY..scanMaxY step 2) {
+                for (x in scanMinX..scanMaxX step 2) {
+                    val p = bitmap.getPixel(x, y)
+                    val r = Color.red(p)
+                    val g = Color.green(p)
+                    val b = Color.blue(p)
+                    if (r >= 235 && g >= 210 && b in 120..210 && (r - b) in 30..105 && kotlin.math.abs(r - g) <= 35) {
+                        if (y < minY) minY = y
+                    }
+                }
+            }
+
+            var tipXSum = 0L
+            var tipYSum = 0L
+            var tipCount = 0
+
+            for (y in minY..(minY + 25).coerceAtMost(h - 1) step 2) {
+                for (x in scanMinX..scanMaxX step 2) {
+                    val p = bitmap.getPixel(x, y)
+                    val r = Color.red(p)
+                    val g = Color.green(p)
+                    val b = Color.blue(p)
+                    if (r >= 235 && g >= 210 && b in 120..210 && (r - b) in 30..105 && kotlin.math.abs(r - g) <= 35) {
+                        tipXSum += x
+                        tipYSum += y
+                        tipCount++
+                    }
+                }
+            }
+
+            if (tipCount > 0) {
+                val tipX = tipXSum.toFloat() / tipCount.toFloat()
+                val tipY = tipYSum.toFloat() / tipCount.toFloat()
+
+                var ringXSum = 0L
+                var ringYSum = 0L
+                var yellowRingPixels = 0
+                val checkRadiusMinSq = 35 * 35
+                val checkRadiusMaxSq = 130 * 130
+                for (dy in -120..120 step 4) {
+                    val py = (tipY.toInt() + dy).coerceIn(0, h - 1)
+                    for (dx in -120..120 step 4) {
+                        val distSq = dx * dx + dy * dy
+                        if (distSq in checkRadiusMinSq..checkRadiusMaxSq) {
+                            val px = (tipX.toInt() + dx).coerceIn(0, w - 1)
+                            val p = bitmap.getPixel(px, py)
+                            val r = Color.red(p)
+                            val g = Color.green(p)
+                            val b = Color.blue(p)
+                            // 노란색/주황색 파동 원 테두리
+                            if (r >= 210 && g >= 160 && b <= 120) {
+                                yellowRingPixels++
+                                ringXSum += px
+                                ringYSum += py
+                            }
+                        }
+                    }
+                }
+
+                // 노란색 링 픽셀이 최소 15개 이상 검출되어야 진짜 안내 손가락/동그라미로 최종 인정!
+                if (yellowRingPixels >= 15) {
+                    val ringCenterX = ringXSum.toFloat() / yellowRingPixels.toFloat()
+                    val ringCenterY = ringYSum.toFloat() / yellowRingPixels.toFloat()
+                    return Pair(ringCenterX, ringCenterY)
+                }
+            }
+        }
+
+        return null
+    }
+
+    private fun checkSkipDialogInBitmap(bitmap: Bitmap): Boolean {
+        val w = bitmap.width
+        val h = bitmap.height
+
+        // 우상단 "건너뛰기 ✕" 흰색 글자 위치만 체크 (x: 86% ~ 97%, y: 3% ~ 9%)
+        // 컷신 배경과 무관하게 텍스트만 감지 - 오탐 없음 (다른 화면에서 이 위치에 흰 글자 없음)
+        val startX = (w * 0.86f).toInt().coerceIn(0, w - 1)
+        val endX = (w * 0.97f).toInt().coerceIn(0, w)
         val startY = (h * 0.03f).toInt().coerceIn(0, h - 1)
-        val endY = (h * 0.08f).toInt().coerceIn(0, h)
+        val endY = (h * 0.09f).toInt().coerceIn(0, h)
 
         var total = 0
         var whitePixels = 0
@@ -748,7 +1058,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
             for (x in startX until endX step 2) {
                 total++
                 val p = bitmap.getPixel(x, y)
-                if (Color.red(p) > 215 && Color.green(p) > 215 && Color.blue(p) > 215) {
+                if (Color.red(p) > 200 && Color.green(p) > 200 && Color.blue(p) > 200) {
                     whitePixels++
                 }
             }
@@ -756,14 +1066,39 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
         if (total == 0) return false
         val ratio = whitePixels.toFloat() / total.toFloat()
-        return ratio > 0.035f
+        return ratio > 0.025f  // 우상단에 흰색 픽셀 2.5% 이상이면 건너뛰기 버튼!
     }
 
     private fun checkConfirmPopupInBitmap(bitmap: Bitmap): Boolean {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 중앙 확인 버튼 (x: 45% ~ 55%, y: 60% ~ 67%)
+        // 1. 팝업창 본체의 짙은 흑갈색 모달 박스 존재 필수 확인 (x: 40% ~ 60%, y: 38% ~ 52%)
+        // (웨스트코스트 선착장 등 나무 바닥 타일 오탐 100% 방지)
+        val boxStartX = (w * 0.40f).toInt().coerceIn(0, w - 1)
+        val boxEndX = (w * 0.60f).toInt().coerceIn(0, w)
+        val boxStartY = (h * 0.38f).toInt().coerceIn(0, h - 1)
+        val boxEndY = (h * 0.52f).toInt().coerceIn(0, h)
+
+        var boxTotal = 0
+        var darkBoxPixels = 0
+        for (y in boxStartY until boxEndY step 3) {
+            for (x in boxStartX until boxEndX step 3) {
+                boxTotal++
+                val p = bitmap.getPixel(x, y)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+                if (r < 65 && g < 55 && b < 45) {
+                    darkBoxPixels++
+                }
+            }
+        }
+        if (boxTotal == 0) return false
+        val darkRatio = darkBoxPixels.toFloat() / boxTotal.toFloat()
+        if (darkRatio < 0.40f) return false
+
+        // 2. 중앙 확인 버튼 (x: 45% ~ 55%, y: 60% ~ 67%)
         val startX = (w * 0.45f).toInt().coerceIn(0, w - 1)
         val endX = (w * 0.55f).toInt().coerceIn(0, w)
         val startY = (h * 0.60f).toInt().coerceIn(0, h - 1)
@@ -787,7 +1122,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
         if (total == 0) return false
         val ratio = goldPixels.toFloat() / total.toFloat()
-        return ratio > 0.20f
+        return ratio > 0.15f
     }
 
     private fun checkQuestSelectPopupInBitmap(bitmap: Bitmap): Boolean {
@@ -823,18 +1158,20 @@ class AutoClickAccessibilityService : AccessibilityService() {
         return ratio > 0.15f
     }
 
-    private fun checkBattleStartInBitmap(bitmap: Bitmap): Boolean {
+    private fun findBattleStartButtonInBitmap(bitmap: Bitmap): Pair<Float, Float>? {
         val w = bitmap.width
         val h = bitmap.height
 
-        // 우하단 던전 선택창의 [입장] / [전투시작] 황금색 버튼 영역 (x: 72% ~ 86%, y: 85% ~ 96%)
-        val startX = (w * 0.72f).toInt().coerceIn(0, w - 1)
-        val endX = (w * 0.86f).toInt().coerceIn(0, w)
-        val startY = (h * 0.85f).toInt().coerceIn(0, h - 1)
-        val endY = (h * 0.96f).toInt().coerceIn(0, h)
+        // 우하단 던전 선택창의 [입장] / [전투시작] 황금색 버튼 영역 (x: 82% ~ 98%, y: 80% ~ 98%)
+        val startX = (w * 0.82f).toInt().coerceIn(0, w - 1)
+        val endX = (w * 0.98f).toInt().coerceIn(0, w)
+        val startY = (h * 0.80f).toInt().coerceIn(0, h - 1)
+        val endY = (h * 0.98f).toInt().coerceIn(0, h)
 
         var total = 0
         var goldPixels = 0
+        var sumX = 0L
+        var sumY = 0L
 
         for (y in startY until endY step 2) {
             for (x in startX until endX step 2) {
@@ -846,13 +1183,259 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 // [입장] 버튼의 고유 황금/주황색 (R: 150~255, G: 90~195, B < 70)
                 if (r in 150..255 && g in 90..195 && b < 70) {
                     goldPixels++
+                    sumX += x
+                    sumY += y
                 }
             }
         }
 
-        if (total == 0) return false
+        if (total == 0) return null
         val ratio = goldPixels.toFloat() / total.toFloat()
-        return ratio > 0.08f
+        if (ratio > 0.08f && goldPixels > 250) {
+            return Pair((sumX / goldPixels).toFloat(), (sumY / goldPixels).toFloat())
+        }
+        return null
+    }
+
+    private fun checkBattleStartInBitmap(bitmap: Bitmap): Boolean {
+        return findBattleStartButtonInBitmap(bitmap) != null
+    }
+
+    private fun checkEquipPopupInBitmap(bitmap: Bitmap): Boolean {
+        val w = bitmap.width
+        val h = bitmap.height
+
+        // 우하단 장비 [장착] 황금/주황 버튼 영역 (x: 89.0% ~ 92.0%, y: 66.5% ~ 69.5%)
+        val ex = (w * 0.905f).toInt().coerceIn(0, w - 1)
+        val ey = (h * 0.680f).toInt().coerceIn(0, h - 1)
+        val p = bitmap.getPixel(ex, ey)
+        val r = Color.red(p)
+        val g = Color.green(p)
+        val b = Color.blue(p)
+
+        return (r in 150..230 && g in 90..160 && b < 60)
+    }
+
+    private fun checkDungeonMiniMapInBitmap(bitmap: Bitmap): Boolean {
+        // 던전 클리어 메뉴가 떠 있는 경우 전투 상태 아님
+        if (checkRetryButtonInBitmap(bitmap)) return false
+
+        val w = bitmap.width
+        val h = bitmap.height
+
+        // 우상단 거의 정사각형 모양의 던전 미니맵 영역 (x: 84% ~ 97%, y: 3% ~ 22%)
+        val startX = (w * 0.84f).toInt().coerceIn(0, w - 1)
+        val endX = (w * 0.97f).toInt().coerceIn(0, w)
+        val startY = (h * 0.03f).toInt().coerceIn(0, h - 1)
+        val endY = (h * 0.22f).toInt().coerceIn(0, h)
+
+        var darkPts = 0
+        var total = 0
+
+        for (y in startY until endY step 2) {
+            for (x in startX until endX step 2) {
+                total++
+                val p = bitmap.getPixel(x, y)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+
+                // 던전 미니맵의 반투명 검은 배경 (R,G,B < 65)
+                if (r < 65 && g < 65 && b < 65) {
+                    darkPts++
+                }
+            }
+        }
+
+        // 던전 안에서는 우상단 정사각형 박스가 최소 30% 이상 어두운 반투명 검은색! (마을은 11% 미만)
+        return total > 0 && (darkPts.toFloat() / total > 0.30f)
+    }
+
+    private fun checkDungeonSelectScreenInBitmap(bitmap: Bitmap): Boolean {
+        // 0. 미니맵이 존재하면 던전 내부 전투 중이므로 절대 던전 선택창이 아님!
+        val mw = bitmap.width; val mh = bitmap.height
+        val sx = (mw * 0.84f).toInt(); val ex = (mw * 0.97f).toInt()
+        val sy = (mh * 0.03f).toInt(); val ey = (mh * 0.22f).toInt()
+        var dark = 0; var tot = 0
+        for (y in sy until ey step 4) {
+            for (x in sx until ex step 4) {
+                tot++
+                val p = bitmap.getPixel(x, y)
+                if (Color.red(p) < 65 && Color.green(p) < 65 && Color.blue(p) < 65) dark++
+            }
+        }
+        if (tot > 0 && (dark.toFloat() / tot > 0.35f)) {
+            return false
+        }
+
+        // 1. 마을 레이더/미니맵 감지 시 던전 선택창 아님!
+        if (checkTownScreenInBitmap(bitmap)) return false
+
+        // 2. 우하단 [입장]/[전투시작] 버튼이 보이면 던전 선택창 판정
+        if (checkBattleStartInBitmap(bitmap)) return true
+
+        val w = bitmap.width
+        val h = bitmap.height
+
+        // 2. 좌상단 [던전 선택] 흰색/밝은 텍스트 (x: 5% ~ 20%, y: 2% ~ 7%)
+        var titlePts = 0
+        val tStartX = (w * 0.05f).toInt().coerceIn(0, w - 1)
+        val tEndX = (w * 0.20f).toInt().coerceIn(0, w)
+        val tStartY = (h * 0.02f).toInt().coerceIn(0, h - 1)
+        val tEndY = (h * 0.07f).toInt().coerceIn(0, h)
+
+        for (y in tStartY until tEndY step 2) {
+            for (x in tStartX until tEndX step 2) {
+                val p = bitmap.getPixel(x, y)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+                if (r > 180 && g > 180 && b > 160) {
+                    titlePts++
+                }
+            }
+        }
+        return titlePts > 150
+    }
+
+    private fun findQuestMapCardInBitmap(bitmap: Bitmap): Pair<Float, Float>? {
+        if (!checkDungeonSelectScreenInBitmap(bitmap)) return null
+
+        val w = bitmap.width
+        val h = bitmap.height
+
+        // 1. 깜박임(플래시) 애니메이션 감지: 카드가 밝은 노란색으로 점멸할 때
+        val step = 6
+        val gw = w / step
+        val gh = h / step
+        val startGY = (h * 0.15f / step).toInt().coerceIn(0, gh - 1)
+        val endGY = (h * 0.85f / step).toInt().coerceIn(0, gh)
+        val startGX = (w * 0.15f / step).toInt().coerceIn(0, gw - 1)
+        val endGX = (w * 0.85f / step).toInt().coerceIn(0, gw)
+
+        val cardBW = 55
+        val cardBH = 23
+        var maxScore = 0
+        var bestFlashX = 0f
+        var bestFlashY = 0f
+
+        val grid = Array(gh) { IntArray(gw) }
+        for (gy in startGY until endGY) {
+            val py = gy * step
+            for (gx in startGX until endGX) {
+                val px = gx * step
+                val p = bitmap.getPixel(px, py)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+                if (r >= 200 && g >= 160 && b <= 110) {
+                    grid[gy][gx] = 1
+                }
+            }
+        }
+
+        val searchLimitGY = (h * 0.80f / step).toInt() - cardBH
+        val searchLimitGX = (w * 0.80f / step).toInt() - cardBW
+        for (gy in startGY until searchLimitGY step 3) {
+            for (gx in startGX until searchLimitGX step 4) {
+                var s = 0
+                for (dy in 0 until cardBH) {
+                    val row = grid[gy + dy]
+                    for (dx in 0 until cardBW) {
+                        s += row[gx + dx]
+                    }
+                }
+                if (s > maxScore) {
+                    maxScore = s
+                    bestFlashX = (gx * step + (cardBW * step) / 2).toFloat()
+                    bestFlashY = (gy * step + (cardBH * step) / 2).toFloat()
+                }
+            }
+        }
+
+        if (maxScore >= 80) {
+            Log.d(TAG, "🗺️ [던전 선택] 깜박이는 퀘스트 맵 카드 감지됨! 점수: $maxScore, 좌표: ($bestFlashX, $bestFlashY)")
+            return Pair(bestFlashX, bestFlashY)
+        }
+
+        // 2. 황금 두루마리 엠블럼 뱃지 감지 (비점멸 정적 상태)
+        val startY = (h * 0.15f).toInt()
+        val endY = (h * 0.85f).toInt()
+        val startX = (w * 0.20f).toInt()
+        val endX = (w * 0.85f).toInt()
+
+        val goldPoints = java.util.ArrayList<Pair<Int, Int>>()
+        for (y in startY until endY step 2) {
+            for (x in startX until endX step 2) {
+                val p = bitmap.getPixel(x, y)
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+                if (r >= 200 && g >= 170 && b <= 75) {
+                    goldPoints.add(Pair(x, y))
+                }
+            }
+        }
+
+        if (goldPoints.isNotEmpty()) {
+            val visited = java.util.HashSet<Pair<Int, Int>>()
+            val goldSet = goldPoints.toHashSet()
+
+            for (pt in goldPoints) {
+                if (visited.contains(pt)) continue
+                val cluster = java.util.ArrayList<Pair<Int, Int>>()
+                val queue = java.util.ArrayDeque<Pair<Int, Int>>()
+                queue.add(pt)
+                visited.add(pt)
+
+                while (queue.isNotEmpty()) {
+                    val curr = queue.removeFirst()
+                    cluster.add(curr)
+                    for (dy in -2..2 step 2) {
+                        for (dx in -2..2 step 2) {
+                            val nxt = Pair(curr.first + dx, curr.second + dy)
+                            if (goldSet.contains(nxt) && !visited.contains(nxt)) {
+                                visited.add(nxt)
+                                queue.add(nxt)
+                            }
+                        }
+                    }
+                }
+
+                if (cluster.size in 60..200) {
+                    var minX = Int.MAX_VALUE
+                    var maxX = Int.MIN_VALUE
+                    var minY = Int.MAX_VALUE
+                    var maxY = Int.MIN_VALUE
+                    var sumX = 0L
+                    var sumY = 0L
+
+                    for (p in cluster) {
+                        if (p.first < minX) minX = p.first
+                        if (p.first > maxX) maxX = p.first
+                        if (p.second < minY) minY = p.second
+                        if (p.second > maxY) maxY = p.second
+                        sumX += p.first
+                        sumY += p.second
+                    }
+
+                    val bwPx = maxX - minX + 1
+                    val bhPx = maxY - minY + 1
+                    val aspect = bwPx.toFloat() / Math.max(1, bhPx).toFloat()
+
+                    if (aspect in 0.70f..2.20f) {
+                        val avgX = (sumX / cluster.size).toFloat()
+                        val avgY = (sumY / cluster.size).toFloat()
+                        val cardX = avgX - w * 0.045f
+                        val cardY = avgY + h * 0.038f
+                        Log.d(TAG, "🗺️ [던전 선택] 퀘스트 엠블럼 뱃지 감지됨! 크기: ${cluster.size}, 뱃지: ($avgX, $avgY) -> 카드중심: ($cardX, $cardY)")
+                        return Pair(cardX, cardY)
+                    }
+                }
+            }
+        }
+
+        return null
     }
 
     private fun checkQuestAuraInBitmap(bitmap: Bitmap): Boolean {
@@ -889,53 +1472,79 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
     private suspend fun captureScreenshotSuspend(): Bitmap? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-        return suspendCoroutine { cont ->
-            mainHandler.post {
-                takeScreenshot(
-                    Display.DEFAULT_DISPLAY,
-                    mainHandler::post,
-                    object : AccessibilityService.TakeScreenshotCallback {
-                        override fun onSuccess(screenshotResult: AccessibilityService.ScreenshotResult) {
-                            val hardwareBitmap = Bitmap.wrapHardwareBuffer(
-                                screenshotResult.hardwareBuffer,
-                                screenshotResult.colorSpace
-                            )
-                            val softwareBitmap = hardwareBitmap?.copy(Bitmap.Config.ARGB_8888, false)
-                            hardwareBitmap?.recycle()
-                            screenshotResult.hardwareBuffer.close()
-                            cont.resume(softwareBitmap)
-                        }
+        val t0 = System.currentTimeMillis()
+        val result = withTimeoutOrNull(600L) {
+            suspendCancellableCoroutine { cont ->
+                mainHandler.post {
+                    try {
+                        takeScreenshot(
+                            Display.DEFAULT_DISPLAY,
+                            mainHandler::post,
+                            object : AccessibilityService.TakeScreenshotCallback {
+                                override fun onSuccess(screenshotResult: AccessibilityService.ScreenshotResult) {
+                                    try {
+                                        val hardwareBitmap = Bitmap.wrapHardwareBuffer(
+                                            screenshotResult.hardwareBuffer,
+                                            screenshotResult.colorSpace
+                                        )
+                                        val softwareBitmap = hardwareBitmap?.copy(Bitmap.Config.ARGB_8888, false)
+                                        hardwareBitmap?.recycle()
+                                        screenshotResult.hardwareBuffer.close()
+                                        if (cont.isActive) cont.resume(softwareBitmap)
+                                    } catch (e: Exception) {
+                                        if (cont.isActive) cont.resume(null)
+                                    }
+                                }
 
-                        override fun onFailure(errorCode: Int) {
-                            Log.w(TAG, "takeScreenshot failed: $errorCode")
-                            cont.resume(null)
-                        }
+                                override fun onFailure(errorCode: Int) {
+                                    if (cont.isActive) cont.resume(null)
+                                }
+                            }
+                        )
+                    } catch (e: Exception) {
+                        if (cont.isActive) cont.resume(null)
                     }
-                )
+                }
             }
         }
+        val elapsed = System.currentTimeMillis() - t0
+        if (elapsed > 200L) Log.d(TAG, "📷 captureScreenshot took ${elapsed}ms")
+        return result
     }
 
     enum class GestureResult { COMPLETED, CANCELLED, FAILED }
 
     private suspend fun dispatchGestureSuspendResult(gesture: GestureDescription): GestureResult {
-        return suspendCoroutine { cont ->
-            mainHandler.post {
-                val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        cont.resume(GestureResult.COMPLETED)
-                    }
-
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        cont.resume(GestureResult.CANCELLED)
-                    }
-                }, null)
-
-                if (!dispatched) {
-                    cont.resume(GestureResult.FAILED)
-                }
+        var maxDuration = 500L
+        for (i in 0 until gesture.strokeCount) {
+            val s = gesture.getStroke(i)
+            if (s.duration > maxDuration) {
+                maxDuration = s.duration
             }
         }
+        return withTimeoutOrNull(maxDuration + 600L) {
+            suspendCancellableCoroutine { cont ->
+                mainHandler.post {
+                    try {
+                        val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+                            override fun onCompleted(gestureDescription: GestureDescription?) {
+                                if (cont.isActive) cont.resume(GestureResult.COMPLETED)
+                            }
+
+                            override fun onCancelled(gestureDescription: GestureDescription?) {
+                                if (cont.isActive) cont.resume(GestureResult.CANCELLED)
+                            }
+                        }, null)
+
+                        if (!dispatched) {
+                            if (cont.isActive) cont.resume(GestureResult.FAILED)
+                        }
+                    } catch (e: Exception) {
+                        if (cont.isActive) cont.resume(GestureResult.FAILED)
+                    }
+                }
+            }
+        } ?: GestureResult.FAILED
     }
 
 

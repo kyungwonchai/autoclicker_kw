@@ -43,7 +43,9 @@ class FloatingOverlayManager(
         if (controlMenuView != null) return
 
         slots.clear()
-        slots.addAll(PresetStorage.getSlots())
+        val allSlots = PresetStorage.getSlots()
+        val fiveSlot = allSlots.find { it.name == "5" || it.holdDurationMs == 5000L } ?: allSlots.last()
+        slots.add(fiveSlot)
         targetPoint = PresetStorage.loadTargetPoint(context)
         val (savedX, savedY) = PresetStorage.getMenuPosition(context)
 
@@ -171,7 +173,7 @@ class FloatingOverlayManager(
         windowManager.addView(controlMenuView, menuLayoutParams)
 
         // 초기 캐릭키움 상태 반영
-        updateGrowthButtonState(AutoClickAccessibilityService.instance?.isGrowthMode() ?: false)
+        updateGrowthButtonState(AutoClickAccessibilityService.instance?.isGrowthMode() ?: true)
 
         // 단일 타겟 포인트 오버레이 표시
         showTargetOverlay()
