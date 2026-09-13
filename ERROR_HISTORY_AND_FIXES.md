@@ -401,5 +401,24 @@
      - 위치 1: 일반/레벨업 보상 (`x: 90.5%, y: 68.0%`)
      - 위치 2: 던전 완료 보상 (`x: 88.5%, y: 85.0%`)
      - 단일 픽셀 검사 대신 버튼 영역 전체의 주황색(`orangeCount > 30`) 픽셀 집합 스캔으로 흰색 텍스트 간섭을 원천 무력화.
-  3. **ADB 원격 디버그/진단 인텐트(`ACTION_DIAGNOSE`, `ACTION_START_SLOT`, `ACTION_STOP`) 지원**:
-     - UI 오버레이 터치 외에도 ADB로 실시간 진단 및 제어가 가능하도록 통신 채널 확장.
+## 28. 순위(워터폴) 구조 폐기 및 순수 상태 패턴(State Machine) 전환 & 던전 미니맵 판별 정상화
+* **증상**:
+  1. 던전 전투 중임에도 우상단 상태바/일시정지 버튼의 파란 픽셀 오인으로 오토클리커가 던전을 마을(`TOWN`)로 착각하여 공격을 멈추고 마을 퀘스트를 기다리는 치명적 결함 발생.
+  2. 순위 기반(워터폴) 로직으로 인해 매 프레임마다 모든 상태가 전역 평가되어, 던전 전투 중에 마을 길찾기가 간섭하거나 반대로 마을에서 전투 키가 오동작하는 혼선 발생.
+* **원인**:
+  1. `checkDungeonMiniMapInBitmap` 함수 서두에 `if (checkTownScreenInBitmap(bitmap)) return false`가 걸려 있었음.
+  2. `checkTownScreenInBitmap`이 우상단 `(x: 95%~98%, y: 2%~7%)` 영역에서 파란 픽셀이 2%만 넘어도 무조건 마을로 판정하는 오탐(False Positive)을 일으켜, 던전 미니맵 검출이 시작도 못 하고 차단됨.
+  3. 전역 순위(0~10순위) 구조로 인해 게임의 현재 맥락(Context)이 유지되지 못하고 화면 노이즈 하나에 상태가 뒤흔들림.
+* **해결 조치**:
+  1. **워터폴 서열 완전 폐기 및 순수 상태 패턴(State Machine / FSM) 전면 도입**:
+     - `GrowthState` 상태 정의: `TOWN`, `TOWN_WALKING`, `DUNGEON_SELECT`, `DUNGEON_LOADING`, `DUNGEON_COMBAT`, `DUNGEON_CLEAR`.
+     - 각 프레임마다 현재 상태(`when (growthState)`) 내에서만 유효한 전이 조건과 행동만 실행되도록 캡슐화.
+     - 던전 전투 공격 홀드는 오직 `DUNGEON_COMBAT` 상태에서만 동작하며, 마을/길찾기/클리어 중에는 공격 홀드가 100% 원천 차단됨.
+  2. **우상단 정사각 '약간 시커먼 네모' 던전 미니맵 식별 로직 정립**:
+     - `checkDungeonMiniMapInBitmap`에서 `checkTownScreenInBitmap` 의존성 완전 제거.
+     - 미니맵의 어두운 반투명 사각 영역(`x: 86%~97%, y: 3.5%~25%`, `darkRatio >= 0.28`), 플레이어 핀/화살표/던전명 황금 폰트, 마을 목재 현판 부재(`woodPts <= 2000`), 실제 전투 컨트롤 존재를 종합 검증.
+  3. **마을 판별 정밀도 극대화**:
+     - 던전 미니맵이 존재하면 절대 마을로 판정하지 않음(`if (checkDungeonMiniMapInBitmap(bitmap)) return false`).
+     - 마을 고유의 대형 목재 현판(`woodPts > 2200`) 또는 검증된 레이더 구체(`ratio > 0.08 && woodPts > 1500`)가 있을 때만 마을로 확정.
+  4. **프레임 단위 상태 자동 동기화(State Auto-Sync)**:
+     - 매 프레임 진입 시 던전 사각 미니맵이 확인되면 즉시 `DUNGEON_COMBAT`으로 상태를 동기화하여 매끄러운 연속 전투 보장.
