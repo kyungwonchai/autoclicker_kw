@@ -364,9 +364,9 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 }
                 if (tot > 0) dark.toFloat() / tot else 0f
             }
-            val isCombat = checkCombatControlsInBitmap(bitmap) || (rawMiniMapDarkRatio > 0.35f)
-            val isDungeonSelect = !isCombat && checkDungeonSelectScreenInBitmap(bitmap)
-            val inDungeon = isCombat && !isDungeonSelect
+            val isDungeonSelect = checkDungeonSelectScreenInBitmap(bitmap)
+            val isCombat = !isDungeonSelect && checkCombatControlsInBitmap(bitmap)
+            val inDungeon = isCombat
             isInDungeonState.set(inDungeon)
 
             if (inDungeon) {
