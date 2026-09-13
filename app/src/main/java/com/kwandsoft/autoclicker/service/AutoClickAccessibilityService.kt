@@ -292,35 +292,55 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // 1순위: 우상단 [에픽] 퀘스트 배너 (마을 길찾기 / 던전선택 자동지정 / 다음 퀘스트 진행)
-            // [에픽]이 화면에 보이면 그 어떤 잡다한 버튼/손가락/스킵보다 무조건 최우선으로 터치!
-            val hasEpicQuest = checkEpicBannerInBitmap(bitmap) || checkQuestAuraInBitmap(bitmap)
-            if (hasEpicQuest) {
-                // 1) 퀘스트 영역에 '이동 중' 텍스트가 감지되면 캐릭터가 목적지에 도착할 때까지 절대 재클릭 금지!
-                if (checkMovingInTownInBitmap(bitmap)) {
-                    bitmap.recycle()
-                    Log.d(TAG, "🏃 [캐릭키움] '이동 중' 텍스트 감지! 캐릭터 이동 완료 대기 (재클릭 방지)")
-                    return
+            // 1순위: 대화 스킵 (✕) (건너뛰기)
+            val isSkipDialog = checkSkipDialogInBitmap(bitmap)
+            if (isSkipDialog) {
+                bitmap.recycle()
+                growthState = GrowthState.DIALOG_PROGRESS
+                lastDialogActionTime = now
+                if (now - lastGrowthActionTime > 200L) {
+                    lastGrowthActionTime = now
+                    Log.d(TAG, "🌱 [1순위: 대화 스킵] 건너뛰기 ✕ 클릭")
+                    val skipX = screenW * 0.915f
+                    val skipY = screenH * 0.060f
+                    tapSingle(skipX, skipY, 50L)
                 }
-
-                // 2) '이동 중'이 아닐 때만 퀘스트 1회 클릭 후 대기 (재클릭 방지 쿨다운 6초)
-                if (now - lastEpicQuestClickTime > 6000L) {
-                    bitmap.recycle()
-                    lastEpicQuestClickTime = now
-                    growthState = GrowthState.TOWN_MOVING
-                    townMoveStartTime = now
-                    lastDialogActionTime = now
-                    Log.d(TAG, "⭐ [1순위: 우상단 에픽 퀘스트] 최우선 터치 후 이동 대기 (86.5%, 18.3%)")
-                    val epicX = screenW * 0.865f
-                    val epicY = screenH * 0.183f
-                    tapSingle(epicX, epicY, 50L)
-                } else {
-                    bitmap.recycle()
-                }
-                return // 에픽 퀘스트가 떠 있는 동안에는 딴 짓 절대 금지!
+                return
             }
 
-            // 2순위: 던전 클리어 메뉴 (보스 처치 후 우측 세로 패널: 마을로 가기, 다음 퀘스트 등)
+            // 2순위: 완료/확인/이동 팝업 (화면 중앙 모달)
+            val isConfirmPopup = checkConfirmPopupInBitmap(bitmap)
+            if (isConfirmPopup) {
+                bitmap.recycle()
+                growthState = GrowthState.DIALOG_PROGRESS
+                lastDialogActionTime = now
+                if (now - lastGrowthActionTime > 200L) {
+                    lastGrowthActionTime = now
+                    Log.d(TAG, "🌱 [2순위: 완료/확인/이동 팝업] 중앙 확인(56%) 클릭")
+                    val confX = screenW * 0.560f
+                    val confY = screenH * 0.630f
+                    tapSingle(confX, confY, 50L)
+                }
+                return
+            }
+
+            // 3순위: NPC 퀘스트 선택 / [보고]/[수락] (목록 최상단 에픽 퀘스트)
+            val isQuestSelectPopup = checkQuestSelectPopupInBitmap(bitmap)
+            if (isQuestSelectPopup) {
+                bitmap.recycle()
+                growthState = GrowthState.DIALOG_PROGRESS
+                lastDialogActionTime = now
+                if (now - lastGrowthActionTime > 200L) {
+                    lastGrowthActionTime = now
+                    Log.d(TAG, "🌱 [3순위: NPC 퀘스트] 최상단 에픽 [보고/수락] 버튼 클릭")
+                    val bogoX = screenW * 0.655f
+                    val bogoY = screenH * 0.355f
+                    tapSingle(bogoX, bogoY, 50L)
+                }
+                return
+            }
+
+            // 4순위: 던전 클리어 메뉴 (보스 처치 후 우측 세로 패널: 마을로 가기, 다음 퀘스트 등)
             val isDungeonClear = checkRetryButtonInBitmap(bitmap)
             if (isDungeonClear) {
                 bitmap.recycle()
@@ -329,7 +349,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
                 if (now - lastClearQuestClickTime > 400L) {
                     lastClearQuestClickTime = now
-                    Log.d(TAG, "🌱 [2순위: 던전 클리어] 최상단 다음 에픽 퀘스트(18.3%) 즉시 클릭")
+                    Log.d(TAG, "🌱 [4순위: 던전 클리어] 최상단 다음 에픽 퀘스트(18.3%) 즉시 클릭")
                     val nextQuestX = screenW * 0.865f
                     val nextQuestY = screenH * 0.183f
                     tapSingle(nextQuestX, nextQuestY, 60L)
@@ -337,55 +357,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // 3순위: 대화 스킵 (✕) (건너뛰기)
-            val isSkipDialog = checkSkipDialogInBitmap(bitmap)
-            if (isSkipDialog) {
-                bitmap.recycle()
-                growthState = GrowthState.DIALOG_PROGRESS
-                lastDialogActionTime = now
-                if (now - lastGrowthActionTime > 200L) {
-                    lastGrowthActionTime = now
-                    Log.d(TAG, "🌱 [3순위: 대화 스킵] 건너뛰기 ✕ 클릭")
-                    val skipX = screenW * 0.915f
-                    val skipY = screenH * 0.060f
-                    tapSingle(skipX, skipY, 50L)
-                }
-                return
-            }
-
-            // 4순위: 완료/확인/이동 팝업 (화면 중앙 모달)
-            val isConfirmPopup = checkConfirmPopupInBitmap(bitmap)
-            if (isConfirmPopup) {
-                bitmap.recycle()
-                growthState = GrowthState.DIALOG_PROGRESS
-                lastDialogActionTime = now
-                if (now - lastGrowthActionTime > 200L) {
-                    lastGrowthActionTime = now
-                    Log.d(TAG, "🌱 [4순위: 완료/확인/이동 팝업] 중앙 확인(56%) 클릭")
-                    val confX = screenW * 0.560f
-                    val confY = screenH * 0.630f
-                    tapSingle(confX, confY, 50L)
-                }
-                return
-            }
-
-            // 5순위: NPC 퀘스트 선택 / [보고]/[수락] (목록 최상단 에픽 퀘스트)
-            val isQuestSelectPopup = checkQuestSelectPopupInBitmap(bitmap)
-            if (isQuestSelectPopup) {
-                bitmap.recycle()
-                growthState = GrowthState.DIALOG_PROGRESS
-                lastDialogActionTime = now
-                if (now - lastGrowthActionTime > 200L) {
-                    lastGrowthActionTime = now
-                    Log.d(TAG, "🌱 [5순위: NPC 퀘스트] 최상단 에픽 [보고/수락] 버튼 클릭")
-                    val bogoX = screenW * 0.655f
-                    val bogoY = screenH * 0.355f
-                    tapSingle(bogoX, bogoY, 50L)
-                }
-                return
-            }
-
-            // 6순위: 던전 내부 전투 중 (우상단 반투명 미니맵 검출)
+            // 5순위: 던전 내부 전투 중 (우상단 반투명 미니맵 검출)
             val rawMiniMapDarkRatio = run {
                 val mw = bitmap.width; val mh = bitmap.height
                 val sx = (mw * 0.84f).toInt(); val ex = (mw * 0.97f).toInt()
@@ -410,7 +382,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
                 if (isPickupHand) {
                     bitmap.recycle()
-                    Log.d(TAG, "🖐️ [6-1순위: 아이템 줍기] 손모양 감지됨! 줍기 탭")
+                    Log.d(TAG, "🖐️ [5-1순위: 아이템 줍기] 손모양 감지됨! 줍기 탭")
                     val pickupX = screenW * 0.825f
                     val pickupY = screenH * 0.825f
                     tapSingle(pickupX, pickupY, 40L)
@@ -419,7 +391,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
                     bitmap.recycle()
                     if (now - lastEntranceTriggerTime > 30000L) {
                         lastEntranceTriggerTime = now
-                        Log.d(TAG, "🚩 [6-2순위: 던전 초입] 첫 방 감지됨! 멍때림 방지 3회 탭")
+                        Log.d(TAG, "🚩 [5-2순위: 던전 초입] 첫 방 감지됨! 멍때림 방지 3회 탭")
                         val targetX = if (targetPoint.rawX > 0f) targetPoint.rawX.coerceIn(10f, screenW - 10f) else (targetPoint.xRatio * screenW).coerceIn(10f, screenW - 10f)
                         val targetY = if (targetPoint.rawY > 0f) targetPoint.rawY.coerceIn(10f, screenH - 10f) else (targetPoint.yRatio * screenH).coerceIn(10f, screenH - 10f)
                         for (i in 1..3) {
@@ -435,7 +407,25 @@ class AutoClickAccessibilityService : AccessibilityService() {
                 return // 던전 전투 중에는 화면 헛클릭 일체 금지 (공격 5초 꾹 누르기 온전히 보장)
             }
 
-            // 7순위: 가이드 손가락 / 노란 원형 링 안내 (👆) (에픽 배너 없을 때 튜토리얼/안내 돌파)
+            // 6순위: 우상단 [에픽] 퀘스트 배너 (마을 길찾기 / 던전선택 자동지정 / 다음 퀘스트 진행)
+            // 팝업이나 던전 상태가 아닐 때 에픽 퀘스트 1회 터치 후 이동 대기 (쿨다운 4초)
+            val hasEpicQuest = checkEpicBannerInBitmap(bitmap) || checkQuestAuraInBitmap(bitmap)
+            if (hasEpicQuest) {
+                bitmap.recycle()
+                if (now - lastEpicQuestClickTime > 4000L) {
+                    lastEpicQuestClickTime = now
+                    growthState = GrowthState.TOWN_MOVING
+                    townMoveStartTime = now
+                    lastDialogActionTime = now
+                    Log.d(TAG, "⭐ [6순위: 우상단 에픽 퀘스트] 클릭 후 이동 대기 (86.5%, 18.3%)")
+                    val epicX = screenW * 0.865f
+                    val epicY = screenH * 0.183f
+                    tapSingle(epicX, epicY, 50L)
+                }
+                return
+            }
+
+            // 7순위: 가이드 손가락 / 노란 원형 링 안내 (👆) (튜토리얼/안내 돌파)
             val pointingTip = checkPointingGuideInBitmap(bitmap)
             if (pointingTip != null) {
                 bitmap.recycle()
